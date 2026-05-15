@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { Analytics } from '@vercel/analytics/react';
 import { supabase } from "./supabase.js";
 
 const CATS = ['Raro Exclusivo','Mobi HC','Raro Rotativo','Raro Comum','Raro Colecionável','Ecotron','Outros'];
@@ -760,6 +761,7 @@ export default function App() {
         Feito com amor por:{' '}
         <a href="http://turva.com.br/home/Bot" target="_blank" rel="noopener noreferrer" style={{color:'#FFD700',textDecoration:'none',marginLeft:'5px'}} onMouseEnter={e=>e.target.style.color='#fff'} onMouseLeave={e=>e.target.style.color='#FFD700'}>Bot</a>
       </footer>
+      <Analytics />
     </div>
   );
 }
