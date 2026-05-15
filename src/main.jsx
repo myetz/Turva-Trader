@@ -1,6 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App.jsx'
 
-export const supabase = createClient(
-  'https://nrvcfypqknvdnmgwiuzz.supabase.co',
-  'sb_publishable_HD5bAm1Yh7muNA7pe7AKxg_c_Z1DIlA'
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode><App /></React.StrictMode>
 )
