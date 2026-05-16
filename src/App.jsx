@@ -39,6 +39,8 @@ export default function App() {
   const [showEditModal,setShowEditModal]=useState(false);
   const [editingTrade,setEditingTrade]=useState(null);
   const [modSearch,setModSearch]=useState('');
+  const [showPEdit,setShowPEdit]=useState(false);
+  const [editingP,setEditingP]=useState(null);
   const [search,setSearch]=useState('');
   const [selRaro,setSelRaro]=useState(null);
   const [showTM,setShowTM]=useState(false);
@@ -184,6 +186,41 @@ export default function App() {
     const {error}=await supabase.from('portfolio').delete().eq('id',id).eq('username',user.username);
     if(error){flash('Erro ao excluir.','error');return;}
     await loadAll();flash('Operação excluída.','info');
+  }
+
+  async function deletePortfolioRaro(raro){
+    if(!window.confirm(`Excluir TODAS as operações de "${raro}"?`))return;
+    const {error}=await supabase.from('portfolio').delete().eq('username',user.username).eq('raro',raro);
+    if(error){flash('Erro ao excluir.','error');return;}
+    await loadAll();flash('Dados excluídos.','info');
+  }
+
+  function openPEdit(item){
+    setEditingP({raro:item.raro,comprados:item.comprados,investido:item.investido,vendidos:item.vendidos,vendido:item.vendido});
+    setShowPEdit(true);
+  }
+
+  async function doEditPortfolioRaro(){
+    if(!editingP)return;
+    const qtdC=parseInt(editingP.comprados)||0;
+    const invst=parseFloat(editingP.investido)||0;
+    const qtdV=parseInt(editingP.vendidos)||0;
+    const rec=parseFloat(editingP.vendido)||0;
+    setLoading(true);
+    // Delete all existing ops for this raro
+    await supabase.from('portfolio').delete().eq('username',user.username).eq('raro',editingP.raro);
+    // Recreate compra
+    if(qtdC>0){
+      await supabase.from('portfolio').insert({username:user.username,raro:editingP.raro,quantidade:qtdC,tipo:'compra',preco_total:invst,preco_por_unidade:Math.round(invst/qtdC),data:today});
+    }
+    // Recreate venda if any
+    if(qtdV>0){
+      await supabase.from('portfolio').insert({username:user.username,raro:editingP.raro,quantidade:qtdV,tipo:'venda',preco_total:rec,preco_por_unidade:Math.round(rec/Math.max(qtdV,1)),data:today});
+    }
+    setLoading(false);
+    await loadAll();
+    setShowPEdit(false);setEditingP(null);
+    flash('Dados atualizados!','success');
   }
 
   // ── Computed: Mercado ──
@@ -492,16 +529,23 @@ export default function App() {
             ))}
           </div>
 
-          {/* Portfolio summary table */}
-          <div style={{...S.card,padding:0,marginBottom:'18px'}}>
+          {/* Portfolio summary table — with image, edit, delete */}
+          <div style={{...S.card,padding:0}}>
             <div style={S.sec}>◆ RESUMO POR RARO{!pStats.length&&<span style={{color:'#666666',fontWeight:'normal'}}> — nenhuma operação ainda</span>}</div>
             <div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                <thead><tr>{['RARO','COMPRADOS','VENDIDOS','ESTOQUE','CUSTO MÉDIO','INVESTIDO','VENDIDO','LUCRO MÉD/VD','LUCRO'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <thead><tr>{['','RARO','COMPRADOS','VENDIDOS','ESTOQUE','CUSTO MÉDIO','INVESTIDO','VENDIDO','LUCRO','AÇÕES'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {!pStats.length&&<tr><td colSpan={9} style={{...S.td,textAlign:'center',color:'#222',padding:'32px',fontSize:'16px'}}>Use <span style={{color:'#FFD700'}}>+ OPERAÇÃO</span> para registrar compras e vendas.</td></tr>}
-                  {pStats.map((item,i)=>(
-                    <tr key={item.raro} className="rrow" style={{background:i%2===0?'#0d0a06':'#0a0804'}}>
+                  {!pStats.length&&<tr><td colSpan={10} style={{...S.td,textAlign:'center',color:'#222',padding:'32px',fontSize:'16px'}}>Use <span style={{color:'#FFD700'}}>+ OPERAÇÃO</span> para registrar compras e vendas.</td></tr>}
+                  {pStats.map((item,i)=>{
+                    const img=rarities.find(r=>r.raro===item.raro)?.imagem_url;
+                    return(
+                    <tr key={item.raro} style={{background:i%2===0?'#0e0e0e':'#0b0b0b'}}>
+                      <td style={{...S.td,width:'46px',padding:'4px 8px'}}>
+                        <div style={{width:'36px',height:'36px',border:'1px solid #2a2a2a',background:'#0d0d0d',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+                          {img?<img src={img} alt={item.raro} style={{width:'100%',height:'100%',objectFit:'contain'}} onError={e=>{e.target.style.display='none';}}/>:<span style={{color:'#333',fontSize:'16px'}}>◈</span>}
+                        </div>
+                      </td>
                       <td style={{...S.td,color:'#FFD700',fontWeight:'bold'}}>{item.raro}</td>
                       <td style={{...S.td,color:'#7bb8ff'}}>{item.comprados}</td>
                       <td style={{...S.td,color:'#7dffaa'}}>{item.vendidos}</td>
@@ -509,36 +553,61 @@ export default function App() {
                       <td style={{...S.td,color:'#bbbbbb'}}>{item.custo}c</td>
                       <td style={{...S.td,color:'#7bb8ff'}}>{item.investido}c</td>
                       <td style={{...S.td,color:'#7dffaa'}}>{item.vendido}c</td>
-                      <td style={{...S.td,color:item.lucroMed>=0?'#69db7c':'#ff6b6b'}}>{item.lucroMed>=0?'+':''}{item.lucroMed}c</td>
                       <td style={{...S.td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:item.lucro>=0?'#69db7c':'#ff6b6b'}}>{item.lucro>=0?'+':''}{item.lucro}c</td>
+                      <td style={{...S.td,whiteSpace:'nowrap'}}>
+                        <div style={{display:'flex',gap:'6px'}}>
+                          <button style={{background:'#1a0a00',border:'2px solid #FFD700',color:'#FFD700',padding:'4px 10px',fontSize:'17px',fontFamily:"'VT323',monospace",cursor:'pointer',transition:'all 0.1s'}}
+                            onMouseEnter={e=>{e.currentTarget.style.background='#FFD700';e.currentTarget.style.color='#000';}}
+                            onMouseLeave={e=>{e.currentTarget.style.background='#1a0a00';e.currentTarget.style.color='#FFD700';}}
+                            onClick={()=>openPEdit(item)}>✎ EDITAR</button>
+                          <button style={{background:'#330000',border:'2px solid #ff4444',color:'#ff4444',padding:'4px 10px',fontSize:'17px',fontFamily:"'VT323',monospace",cursor:'pointer',transition:'all 0.1s'}}
+                            onMouseEnter={e=>{e.currentTarget.style.background='#ff4444';e.currentTarget.style.color='#fff';}}
+                            onMouseLeave={e=>{e.currentTarget.style.background='#330000';e.currentTarget.style.color='#ff4444';}}
+                            onClick={()=>deletePortfolioRaro(item.raro)}>✕</button>
+                        </div>
+                      </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Individual operations with delete */}
-          <div style={{...S.card,padding:0}}>
-            <div style={S.sec}>◆ HISTÓRICO DE OPERAÇÕES — clique em ✕ para excluir</div>
-            <div style={{overflowX:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                <thead><tr>{['DATA','TIPO','RARO','QTD','PREÇO TOTAL','PREÇO/UN',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {!portfolio.length&&<tr><td colSpan={7} style={{...S.td,textAlign:'center',color:'#222',padding:'32px'}}>Nenhuma operação ainda.</td></tr>}
-                  {portfolio.map((op,i)=>(
-                    <tr key={op.id} className="rrow" style={{background:i%2===0?'#0d0a06':'#0a0804'}}>
-                      <td style={{...S.td,color:'#aaaaaa'}}>{fmtDate(op.data)}</td>
-                      <td style={{...S.td,color:op.tipo==='compra'?'#7bb8ff':'#7dffaa',fontFamily:"'Press Start 2P'",fontSize:'11px'}}>{op.tipo==='compra'?'COMPRA':'VENDA'}</td>
-                      <td style={{...S.td,color:'#FFD700'}}>{op.raro}</td>
-                      <td style={{...S.td,color:'#999999'}}>{op.quantidade}</td>
-                      <td style={{...S.td,color:'#bbbbbb'}}>{op.precoTotal}c</td>
-                      <td style={{...S.td,color:'#d0d0d0'}}>{op.precoPorUnidade}c</td>
-                      <td style={S.td}><button className="del-btn" style={S.btnDel} onClick={()=>deleteOp(op.id)}>✕</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {/* Modal: Editar Portfolio Item */}
+      {showPEdit&&editingP&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.9)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:300}}>
+          <div style={{...S.card,width:'420px',maxWidth:'96vw',border:'2px solid #FFD700',boxShadow:'8px 8px 0 #332200',padding:'24px',position:'relative'}} className="anim">
+            {['tl','tr','bl','br'].map(p=><div key={p} style={{position:'absolute',width:'10px',height:'10px',background:'#FFD700',top:p[0]==='t'?-2:'auto',bottom:p[0]==='b'?-2:'auto',left:p[1]==='l'?-2:'auto',right:p[1]==='r'?-2:'auto'}}/>)}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px'}}>
+              <div style={{fontFamily:"'Press Start 2P'",fontSize:'10px',color:'#FFD700'}}>✎ EDITAR</div>
+              <span style={{color:'#443300',cursor:'pointer',fontSize:'24px',lineHeight:1}} onClick={()=>{setShowPEdit(false);setEditingP(null);}}>✕</span>
+            </div>
+            <div style={{color:'#FFD700',fontSize:'20px',marginBottom:'18px',borderBottom:'1px solid #222',paddingBottom:'10px'}}>{editingP.raro}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'14px'}}>
+              <div>
+                <label style={{display:'block',color:'#aaaaaa',fontSize:'14px',marginBottom:'5px'}}>QTD COMPRADA</label>
+                <input className="inp" style={S.inp} type="number" min="0" value={editingP.comprados} onChange={e=>setEditingP({...editingP,comprados:e.target.value})}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:'#aaaaaa',fontSize:'14px',marginBottom:'5px'}}>TOTAL INVESTIDO (c)</label>
+                <input className="inp" style={S.inp} type="number" min="0" value={editingP.investido} onChange={e=>setEditingP({...editingP,investido:e.target.value})}/>
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'20px'}}>
+              <div>
+                <label style={{display:'block',color:'#aaaaaa',fontSize:'14px',marginBottom:'5px'}}>QTD VENDIDA</label>
+                <input className="inp" style={S.inp} type="number" min="0" value={editingP.vendidos} onChange={e=>setEditingP({...editingP,vendidos:e.target.value})}/>
+              </div>
+              <div>
+                <label style={{display:'block',color:'#aaaaaa',fontSize:'14px',marginBottom:'5px'}}>TOTAL RECEBIDO (c)</label>
+                <input className="inp" style={S.inp} type="number" min="0" value={editingP.vendido} onChange={e=>setEditingP({...editingP,vendido:e.target.value})}/>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:'10px'}}>
+              <button style={{...S.btnY,flex:1,textAlign:'center',opacity:loading?.6:1}} onClick={doEditPortfolioRaro} disabled={loading}>{loading?'SALVANDO...':'✓ SALVAR'}</button>
+              <button style={S.btnG} onClick={()=>{setShowPEdit(false);setEditingP(null);}}>CANCELAR</button>
             </div>
           </div>
         </div>
