@@ -142,21 +142,25 @@ export default function App(){
   // ── Data ───────────────────────────────────────────────────────────
   async function loadAll(uname){
     const un=uname||user?.username;
-    const {data:uData}=await supabase.from('users').select('is_admin').eq('username',un).maybeSingle();
-    const isAdm=uData?.is_admin||false;
-    const [tR,rR,pR,oR,...rest]=await Promise.all([
-      supabase.from('trades').select('*').eq('status','approved').order('data',{ascending:true}),
-      supabase.from('rarities').select('*'),
-      supabase.from('portfolio').select('*').eq('username',un).order('data',{ascending:false}),
-      supabase.from('orders').select('*').gt('expires_at',new Date().toISOString()).order('created_at',{ascending:false}),
-      ...(isAdm?[supabase.from('trades').select('*').eq('status','pending').order('created_at',{ascending:false})]:{}),
-    ]);
-    if(tR.data)setTrades(tR.data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
-    if(rR.data)setRarities(rR.data);
-    if(pR.data)setPortfolio(pR.data.map(x=>({...x,precoTotal:x.preco_total,precoPorUnidade:x.preco_por_unidade})));
-    if(oR.data)setOrders(oR.data);
-    if(rest[0]?.data)setPendingTrades(rest[0].data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
-    setUser(prev=>prev?{...prev,is_admin:isAdm}:prev);
+    if(!un)return;
+    try{
+      const {data:uData}=await supabase.from('users').select('is_admin').eq('username',un).maybeSingle();
+      const isAdm=!!(uData?.is_admin);
+      const baseQ=[
+        supabase.from('trades').select('*').eq('status','approved').order('data',{ascending:true}),
+        supabase.from('rarities').select('*'),
+        supabase.from('portfolio').select('*').eq('username',un).order('data',{ascending:false}),
+        supabase.from('orders').select('*').gt('expires_at',new Date().toISOString()).order('created_at',{ascending:false}),
+        ...(isAdm?[supabase.from('trades').select('*').eq('status','pending').order('created_at',{ascending:false})]:[]),
+      ];
+      const [tR,rR,pR,oR,...rest]=await Promise.all(baseQ);
+      if(tR?.data)setTrades(tR.data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
+      if(rR?.data)setRarities(rR.data);
+      if(pR?.data)setPortfolio(pR.data.map(x=>({...x,precoTotal:x.preco_total,precoPorUnidade:x.preco_por_unidade})));
+      if(oR?.data)setOrders(oR.data);
+      if(rest[0]?.data)setPendingTrades(rest[0].data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
+      setUser(prev=>prev?{...prev,is_admin:isAdm}:prev);
+    }catch(e){console.warn('loadAll:',e);}
   }
 
   async function loadMessages(){
@@ -174,7 +178,8 @@ export default function App(){
     setLoading(false);
     if(error||!data){flash('Usuário ou senha incorretos.','error');return;}
     setUser(data);localStorage.setItem('tt-user',JSON.stringify(data));
-    await loadAll(data.username);setLF({u:'',p:''});setScreen('dashboard');
+    try{await loadAll(data.username);}catch(e){console.warn(e);}
+    setLF({u:'',p:''});setScreen('dashboard');
   }
 
   async function doRegister(){
@@ -188,7 +193,8 @@ export default function App(){
     setLoading(false);
     if(error||!data){flash('Erro ao criar conta.','error');return;}
     setUser(data);localStorage.setItem('tt-user',JSON.stringify(data));
-    await loadAll(data.username);setRF({u:'',p:'',c:''});setScreen('dashboard');flash('Bem-vindo(a)!','success');
+    try{await loadAll(data.username);}catch(e){console.warn(e);}
+    setRF({u:'',p:'',c:''});setScreen('dashboard');flash('Bem-vindo(a)!','success');
   }
 
   function doLogout(){setUser(null);setSelRaro(null);setTrades([]);setPortfolio([]);setRarities([]);setOrders([]);setMessages([]);localStorage.removeItem('tt-user');setScreen('login');}
