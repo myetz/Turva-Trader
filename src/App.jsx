@@ -3,8 +3,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { supabase } from "./supabase.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
-const CATS = ['Raro Exclusivo','Mobi HC','Raro Rotativo','Raro Comum','Raro Colecionável','Ecotron','Outros'];
-const CAT_C = {'Raro Exclusivo':'#ff2222','Mobi HC':'#4dabf7','Raro Rotativo':'#69db7c','Raro Comum':'#aaa','Raro Colecionável':'#e599f7','Ecotron':'#63e6be','Outros':'#cc0000'};
+const CATS = ['Raro Exclusivo','Mobi HC','Raro Rotativo','Raro Comum','Raro Colecionável','Ecotron','Raro de Competição','Outros'];
+const CAT_C = {'Mobi HC':'#ff8c00','Ecotron':'#7fff00','Raro Rotativo':'#9400d3','Raro Exclusivo':'#cc0000','Raro de Competição':'#00ced1','Raro Colecionável':'#1e90ff','Raro Comum':'#aaa','Outros':'#868e96'};
 const G='#FFD700',G2='#CCA800',BG='#0a0804',BG2='#130f0a',BG3='#1a1208';
 
 // ── Helpers ────────────────────────────────────────────────────────────
