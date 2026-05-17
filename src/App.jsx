@@ -4,7 +4,7 @@ import { supabase } from "./supabase.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
 const CATS = ['Raro Exclusivo','Mobi HC','Raro Rotativo','Raro Comum','Raro Colecionável','Ecotron','Outros'];
-const CAT_C = {'Raro Exclusivo':'#ff6b35','Mobi HC':'#4dabf7','Raro Rotativo':'#69db7c','Raro Comum':'#aaa','Raro Colecionável':'#e599f7','Ecotron':'#63e6be','Outros':'#868e96'};
+const CAT_C = {'Raro Exclusivo':'#ff2222','Mobi HC':'#4dabf7','Raro Rotativo':'#69db7c','Raro Comum':'#aaa','Raro Colecionável':'#e599f7','Ecotron':'#63e6be','Outros':'#868e96'};
 const G='#FFD700',G2='#CCA800',BG='#0a0804',BG2='#130f0a',BG3='#1a1208';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -69,10 +69,15 @@ export default function App(){
   // Painel
   const [pSearch,setPSearch]=useState('');
   const [pSort,setPSort]=useState('raro');
+  const [pSortDir,setPSortDir]=useState('asc');
   // Orders
   const [orderFilter,setOrderFilter]=useState('todos');
   // Moderation
   const [modSearch,setModSearch]=useState('');
+  const [chatModSearch,setChatModSearch]=useState('');
+  const [viewUser,setViewUser]=useState('');
+  const [viewUserData,setViewUserData]=useState(null);
+  const [allUsers,setAllUsers]=useState([]);
   // Chat
   const [chatOpen,setChatOpen]=useState(false);
   const [chatInput,setChatInput]=useState('');
@@ -160,12 +165,40 @@ export default function App(){
       if(oR?.data)setOrders(oR.data);
       if(rest[0]?.data)setPendingTrades(rest[0].data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
       setUser(prev=>prev?{...prev,is_admin:isAdm}:prev);
+      if(isAdm)loadAdminUsers();
     }catch(e){console.warn('loadAll:',e);}
   }
 
   async function loadMessages(){
-    const {data}=await supabase.from('messages').select('*').order('created_at',{ascending:true}).limit(80);
+    const {data}=await supabase.from('messages').select('*').order('created_at',{ascending:true}).limit(200);
     if(data)setMessages(data);
+  }
+
+  async function deleteMessage(id){
+    await supabase.from('messages').delete().eq('id',id);
+    await loadMessages();
+  }
+
+  async function loadAdminUsers(){
+    const {data}=await supabase.from('users').select('id,username,is_admin').order('username',{ascending:true});
+    if(data)setAllUsers(data);
+  }
+
+  async function loadViewUser(uname){
+    if(!uname){setViewUserData(null);return;}
+    const {data:p}=await supabase.from('portfolio').select('*').eq('username',uname).order('data',{ascending:false});
+    if(!p){setViewUserData(null);return;}
+    const ops=p.map(x=>({...x,precoTotal:x.preco_total,precoPorUnidade:x.preco_por_unidade}));
+    const map={};
+    ops.forEach(op=>{if(!map[op.raro])map[op.raro]={raro:op.raro,c:[],v:[]};map[op.raro][op.tipo==='compra'?'c':'v'].push(op);});
+    const stats=Object.values(map).map(item=>{
+      const qC=item.c.reduce((s,o)=>s+o.quantidade,0),qV=item.v.reduce((s,o)=>s+o.quantidade,0);
+      const inv2=item.c.reduce((s,o)=>s+o.precoTotal,0),rec2=item.v.reduce((s,o)=>s+o.precoTotal,0);
+      const custo=qC?Math.round(inv2/qC):0;
+      return{raro:item.raro,comprados:qC,vendidos:qV,estoque:qC-qV,custo,investido:inv2,vendido:rec2,lucro:Math.round(rec2-(qV*custo))};
+    });
+    const inv2=stats.reduce((s,i)=>s+i.investido,0),rec2=stats.reduce((s,i)=>s+i.vendido,0);
+    setViewUserData({stats,totals:{inv:inv2,rec:rec2,balanco:rec2-inv2,lucroTotal:stats.reduce((s,i)=>s+i.lucro,0),parado:stats.reduce((s,i)=>s+(i.estoque*i.custo),0)}});
   }
 
   const flash=(text,type='info')=>{setMsg({text,type});setTimeout(()=>setMsg({text:'',type:'info'}),3500);};
@@ -333,13 +366,22 @@ export default function App(){
   const filteredPStats=useMemo(()=>{
     let r=[...pStats];
     if(pSearch)r=r.filter(i=>i.raro.toLowerCase().includes(pSearch.toLowerCase()));
-    const sorts={raro:(a,b)=>a.raro.localeCompare(b.raro),estoque:(a,b)=>b.estoque-a.estoque,investido:(a,b)=>b.investido-a.investido,lucro:(a,b)=>b.lucro-a.lucro,comprados:(a,b)=>b.comprados-a.comprados};
-    return r.sort(sorts[pSort]||sorts.raro);
-  },[pStats,pSearch,pSort]);
+    const numSort=(key)=>(a,b)=>pSortDir==='desc'?b[key]-a[key]:a[key]-b[key];
+    const strSort=(a,b)=>pSortDir==='desc'?b.raro.localeCompare(a.raro):a.raro.localeCompare(b.raro);
+    const sorts={raro:strSort,estoque:numSort('estoque'),investido:numSort('investido'),lucro:numSort('lucro'),comprados:numSort('comprados'),vendidos:numSort('vendidos'),vendido:numSort('vendido'),custo:numSort('custo')};
+    return r.sort(sorts[pSort]||strSort);
+  },[pStats,pSearch,pSort,pSortDir]);
 
   const totals=useMemo(()=>{
     const inv=pStats.reduce((s,i)=>s+i.investido,0),rec=pStats.reduce((s,i)=>s+i.vendido,0),parado=pStats.reduce((s,i)=>s+(i.estoque*i.custo),0);
-    return{inv,rec,parado,balanco:rec-inv,taxa:pStats.length?Math.round(pStats.filter(i=>i.lucro>0).length/pStats.length*100):0};
+    const lucroTotal=pStats.reduce((s,i)=>s+i.lucro,0);
+    // Margem: avg(preco_venda/max(preco_compra,1)) for items with sales
+    const comVendas=pStats.filter(i=>i.vendidos>0);
+    const margem=comVendas.length?Math.round((comVendas.reduce((s,i)=>{
+      const avgV=i.vendido/i.vendidos,avgC=i.custo>0?i.custo:1;
+      return s+(avgV/avgC);
+    },0)/comVendas.length-1)*100):0;
+    return{inv,rec,parado,balanco:rec-inv,lucroTotal,margem,comVendas:comVendas.length};
   },[pStats]);
 
   const filteredOrders=useMemo(()=>orderFilter==='todos'?orders:orders.filter(o=>o.tipo===orderFilter),[orders,orderFilter]);
@@ -594,9 +636,10 @@ export default function App(){
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'12px',marginBottom:'18px'}}>
             {[
               {l:'BALANÇO ATUAL',v:`${totals.balanco>=0?'+':''}${totals.balanco}c`,sub:totals.balanco>=0?'lucro acumulado':'prejuízo acumulado',color:totals.balanco>=0?'#69db7c':'#f66'},
+              {l:'LUCRO TOTAL',v:`${totals.lucroTotal>=0?'+':''}${totals.lucroTotal}c`,sub:'das vendas realizadas',color:totals.lucroTotal>=0?'#63e6be':'#ff8855'},
               {l:'CAPITAL INVESTIDO',v:`${totals.inv}c`,sub:'total comprado',color:'#7bb8ff'},
               {l:'CAPITAL PARADO',v:`${totals.parado}c`,sub:'em estoque',color:G},
-              {l:'TAXA DE ACERTO',v:`${totals.taxa}%`,sub:'itens com lucro',color:'#e599f7'},
+              {l:'MARGEM DE LUCRO',v:totals.comVendas?`${totals.margem>=0?'+':''}${totals.margem}%`:'—',sub:totals.comVendas?`média em ${totals.comVendas} raro(s) c/ venda`:'nenhuma venda ainda',color:totals.margem>=0?'#e599f7':'#ff8855'},
             ].map(s=>(
               <div key={s.l} style={{...card,padding:'14px 18px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
                 <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'8px',letterSpacing:'1px'}}>{s.l}</div>
@@ -610,19 +653,22 @@ export default function App(){
             <div style={secHdr}>
               <span>◆ RESUMO POR RARO — {filteredPStats.length} itens</span>
               <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-                <input className="inp" style={{...inp,width:'140px',padding:'4px 10px',fontSize:'16px'}} placeholder="buscar..." value={pSearch} onChange={e=>setPSearch(e.target.value)}/>
-                <select style={{...sel,width:'140px',padding:'4px 10px',fontSize:'16px'}} value={pSort} onChange={e=>setPSort(e.target.value)}>
-                  <option value="raro">A→Z</option>
-                  <option value="estoque">Maior estoque</option>
-                  <option value="investido">Maior investido</option>
-                  <option value="lucro">Maior lucro</option>
-                  <option value="comprados">Mais comprados</option>
-                </select>
+                <input className="inp" style={{...inp,width:'130px',padding:'4px 10px',fontSize:'16px'}} placeholder="buscar..." value={pSearch} onChange={e=>setPSearch(e.target.value)}/>
+                {(pSort!=='raro'||pSortDir!=='asc'||pSearch)&&(
+                  <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#aa8855',borderColor:'#664400'}} onClick={()=>{setPSort('raro');setPSortDir('asc');setPSearch('');}}>✕ limpar</button>
+                )}
               </div>
             </div>
             <div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                <thead><tr>{['','RARO','COMPRADOS','VENDIDOS','ESTOQUE','CUSTO MÉD','INVESTIDO','VENDIDO','LUCRO',''].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                <thead><tr>
+                  {[['',''],['RARO','raro'],['COMPRADOS','comprados'],['VENDIDOS','vendidos'],['ESTOQUE','estoque'],['CUSTO MÉD','custo'],['INVESTIDO','investido'],['VENDIDO','vendido'],['LUCRO','lucro'],['','']].map(([label,col])=>(
+                    <th key={label||col} style={{...th,...(col?{cursor:'pointer',userSelect:'none'}:{})}}
+                      onClick={()=>{if(!col)return;if(pSort===col)setPSortDir(d=>d==='asc'?'desc':'asc');else{setPSort(col);setPSortDir('desc');}}}>
+                      {label}{col&&pSort===col?<span style={{marginLeft:'4px',color:G}}>{pSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#3a2a10',fontSize:'9px'}}>{col?'⇅':''}</span>}
+                    </th>
+                  ))}
+                </tr></thead>
                 <tbody>
                   {!filteredPStats.length&&<tr><td colSpan={10} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px',fontSize:'16px'}}>Use <span style={{color:G}}>+ OPERAÇÃO</span> para registrar.</td></tr>}
                   {filteredPStats.map((item,i)=>{
@@ -775,6 +821,83 @@ export default function App(){
                 ))}</tbody>
               </table>
             </div>
+          </div>
+
+          {/* Chat moderation */}
+          <div style={{...card,padding:0,marginTop:'18px'}}>
+            <div style={secHdr}>
+              <span>◆ MODERAÇÃO DO CHAT — {messages.length} mensagens</span>
+              <input className="inp" style={{...inp,width:'160px',padding:'4px 10px',fontSize:'16px'}} placeholder="filtrar usuário..." value={chatModSearch} onChange={e=>setChatModSearch(e.target.value)}/>
+            </div>
+            <div style={{overflowX:'auto',maxHeight:'300px',overflow:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
+                <thead><tr>{['HORA','USUÁRIO','MENSAGEM',''].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {[...messages].filter(m=>!chatModSearch||m.username.toLowerCase().includes(chatModSearch.toLowerCase())).reverse().map((m,i)=>(
+                    <tr key={m.id} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
+                      <td style={{...td,color:'#4a3010',width:'60px'}}>{fmtTime(m.created_at)}</td>
+                      <td style={{...td,color:G,whiteSpace:'nowrap'}}>{m.username}</td>
+                      <td style={{...td,color:'#c8a870',maxWidth:'400px',whiteSpace:'normal',wordBreak:'break-word'}}>{m.message}</td>
+                      <td style={td}>
+                        <button style={{...btnRed,padding:'3px 8px',fontSize:'16px'}} onMouseEnter={e=>{e.currentTarget.style.background='#f44';e.currentTarget.style.color='#fff';}} onMouseLeave={e=>{e.currentTarget.style.background='#220000';e.currentTarget.style.color='#f44';}} onClick={()=>deleteMessage(m.id)}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!messages.length&&<tr><td colSpan={4} style={{...td,textAlign:'center',color:'#2a1800',padding:'24px'}}>Nenhuma mensagem no chat.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* User panel viewer */}
+          <div style={{...card,padding:0,marginTop:'18px'}}>
+            <div style={secHdr}>◆ PAINEL DE USUÁRIO</div>
+            <div style={{padding:'12px 16px',borderBottom:'1px solid #1a1000',display:'flex',gap:'8px',alignItems:'center'}}>
+              <select style={{...sel,width:'220px',padding:'6px 10px',fontSize:'17px'}} value={viewUser} onChange={e=>{setViewUser(e.target.value);setViewUserData(null);}}>
+                <option value="">— selecionar usuário —</option>
+                {allUsers.map(u=><option key={u.id} value={u.username}>{u.username}{u.is_admin?' (admin)':''}</option>)}
+              </select>
+              <button style={{...btnY,padding:'6px 16px',fontSize:'17px'}} onClick={()=>loadViewUser(viewUser)} disabled={!viewUser}>Ver painel</button>
+              {viewUserData&&<button style={{...btnG,padding:'6px 12px',fontSize:'16px'}} onClick={()=>{setViewUser('');setViewUserData(null);}}>✕ fechar</button>}
+            </div>
+            {viewUserData&&(
+              <div style={{padding:'14px'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:'10px',marginBottom:'14px'}}>
+                  {[
+                    {l:'BALANÇO',v:`${viewUserData.totals.balanco>=0?'+':''}${viewUserData.totals.balanco}c`,color:viewUserData.totals.balanco>=0?'#69db7c':'#f66'},
+                    {l:'LUCRO TOTAL',v:`${viewUserData.totals.lucroTotal>=0?'+':''}${viewUserData.totals.lucroTotal}c`,color:viewUserData.totals.lucroTotal>=0?'#63e6be':'#ff8855'},
+                    {l:'INVESTIDO',v:`${viewUserData.totals.inv}c`,color:'#7bb8ff'},
+                    {l:'PARADO',v:`${viewUserData.totals.parado}c`,color:G},
+                  ].map(s=>(
+                    <div key={s.l} style={{...card,padding:'10px',textAlign:'center',border:`1px solid ${s.color}33`}}>
+                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'6px'}}>{s.l}</div>
+                      <div style={{color:s.color,fontSize:'20px',fontWeight:'bold'}}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{overflowX:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'16px'}}>
+                    <thead><tr>{['RARO','COMPRADOS','VENDIDOS','ESTOQUE','CUSTO MÉD','INVESTIDO','VENDIDO','LUCRO'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {!viewUserData.stats.length&&<tr><td colSpan={8} style={{...td,textAlign:'center',color:'#2a1800',padding:'24px'}}>Sem operações registradas.</td></tr>}
+                      {viewUserData.stats.map((item,i)=>(
+                        <tr key={item.raro} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
+                          <td style={{...td,color:G,fontWeight:'bold'}}>{item.raro}</td>
+                          <td style={{...td,color:'#7bb8ff'}}>{item.comprados}</td>
+                          <td style={{...td,color:'#7dffaa'}}>{item.vendidos}</td>
+                          <td style={{...td,color:item.estoque>0?G:'#4a3010'}}>{item.estoque}</td>
+                          <td style={{...td,color:'#aa8855'}}>{item.custo}c</td>
+                          <td style={{...td,color:'#7bb8ff'}}>{item.investido}c</td>
+                          <td style={{...td,color:'#7dffaa'}}>{item.vendido}c</td>
+                          <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:item.lucro>=0?'#69db7c':'#f66'}}>{item.lucro>=0?'+':''}{item.lucro}c</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            {viewUser&&!viewUserData&&<div style={{padding:'20px',textAlign:'center',color:'#4a3010',fontSize:'16px'}}>Clique em "Ver painel" para carregar os dados.</div>}
           </div>
         </div>
       )}
