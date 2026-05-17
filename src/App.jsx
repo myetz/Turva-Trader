@@ -4,7 +4,7 @@ import { supabase } from "./supabase.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
 const CATS = ['Raro Exclusivo','Mobi HC','Raro Rotativo','Raro Comum','Raro Colecionável','Ecotron','Raro Promocional'];
-const CAT_C = {'Raro Exclusivo':'#ff6b35','Mobi HC':'#4dabf7','Raro Rotativo':'#69db7c','Raro Comum':'#aaa','Raro Colecionável':'#e599f7','Ecotron':'#63e6be','Raro Promocional':'#868e96'};
+const CAT_C = {'Raro Exclusivo':'#ff6b35','Mobi HC':'#4dabf7','Raro Rotativo':'#69db7c','Raro Comum':'#aaa','Raro Colecionável':'#e599f7','Ecotron':'#63e6be','Raro Promocional':'#FF69B4'};
 const G='#FFD700',G2='#CCA800',BG='#0a0804',BG2='#130f0a',BG3='#1a1208';
 
 // ── Helpers ────────────────────────────────────────────────────────────
