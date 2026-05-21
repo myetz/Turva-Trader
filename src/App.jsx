@@ -85,6 +85,7 @@ export default function App(){
   const [search,setSearch]=useState('');
   const [selRaro,setSelRaro]=useState(null);
   const [quickRaro,setQuickRaro]=useState(null);
+  const [histView,setHistView]=useState('dia');
   const [mSort,setMSort]=useState('lastDate');
   const [mSortDir,setMSortDir]=useState('desc');
   // Painel
@@ -229,8 +230,16 @@ export default function App(){
   }
 
   async function loadAdminUsers(){
-    const {data}=await supabase.from('users').select('id,username,is_admin').order('username',{ascending:true});
-    if(data)setAllUsers(data);
+    // Busca todos os usuários e quem tem registros no portfólio
+    const [usersR,portR]=await Promise.all([
+      supabase.from('users').select('id,username,is_admin').order('username',{ascending:true}),
+      supabase.from('portfolio').select('username'),
+    ]);
+    if(usersR.data){
+      const comRegistro=new Set((portR.data||[]).map(p=>p.username));
+      // Apenas jogadores que possuem ao menos 1 registro no painel
+      setAllUsers(usersR.data.filter(u=>comRegistro.has(u.username)));
+    }
   }
 
   async function loadViewUser(uname){
@@ -445,7 +454,7 @@ export default function App(){
   const quickInfo=useMemo(()=>quickRaro?uRaros.find(r=>r.raro===quickRaro):null,[uRaros,quickRaro]);
   const selTrades=useMemo(()=>selRaro?[...trades.filter(t=>t.raro===selRaro)].sort((a,b)=>b.data.localeCompare(a.data)):[],[trades,selRaro]);
   const chartData=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]=[];by[t.data].push(t.precoPorUnidade);});return Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([date,ps])=>({date,preco:calcAvg(ps)}));},[selTrades]);
-  const dailyAvg=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]=[];by[t.data].push(t.precoPorUnidade);});return Object.entries(by).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,ps])=>({date,avg:calcAvg(ps),count:ps.length}));},[selTrades]);
+  const dailyAvg=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]={precos:[],units:0};const q=Math.max(1,t.quantidade||1);for(let i=0;i<q;i++)by[t.data].precos.push(t.precoPorUnidade);by[t.data].units+=q;});return Object.entries(by).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,d])=>({date,avg:calcAvg(d.precos),units:d.units}));},[selTrades]);
 
   const pStats=useMemo(()=>{
     const map={};
@@ -480,7 +489,9 @@ export default function App(){
       return s+(avgV/avgC);
     },0)/comVendas.length-1)*100):0;
     const mktTotal=pStats.reduce((s,i)=>s+i.mktValue,0);
-    return{inv,rec,parado,balanco:rec-inv,lucroTotal,margem,comVendas:comVendas.length,mktTotal};
+    // Margem geral: lucro total sobre o investido, em %
+    const margemGeral=inv>0?Math.round((lucroTotal/inv)*100):(lucroTotal>0?100:null);
+    return{inv,rec,parado,balanco:rec-inv,lucroTotal,margem,comVendas:comVendas.length,mktTotal,margemGeral};
   },[pStats]);
 
   const filteredOrders=useMemo(()=>orderFilter==='todos'?orders:orders.filter(o=>o.tipo===orderFilter),[orders,orderFilter]);
@@ -491,10 +502,10 @@ export default function App(){
 
   // Paginated slices
   const mItems=useMemo(()=>sortedURaros.slice(mPage*PAGE,(mPage+1)*PAGE),[sortedURaros,mPage]);
-  const pItems=useMemo(()=>filteredPStats.slice(pPage*PAGE,(pPage+1)*PAGE),[filteredPStats,pPage]);
+  const pItems=useMemo(()=>filteredPStats.slice(pPage*10,(pPage+1)*10),[filteredPStats,pPage]);
   const modPItems=useMemo(()=>pendingTrades.slice(modPPage*PAGE,(modPPage+1)*PAGE),[pendingTrades,modPPage]);
   const modAItems=useMemo(()=>{const f=trades.filter(t=>!modSearch||t.raro.toLowerCase().includes(modSearch.toLowerCase())).sort((a,b)=>b.data.localeCompare(a.data));return f.slice(modAPage*PAGE,(modAPage+1)*PAGE);},[trades,modSearch,modAPage]);
-  const modCItems=useMemo(()=>{const f=[...messages].filter(m=>!chatModSearch||m.username.toLowerCase().includes(chatModSearch.toLowerCase())).reverse();return f.slice(modCPage*PAGE,(modCPage+1)*PAGE);},[messages,chatModSearch,modCPage]);
+  const modCItems=useMemo(()=>{const f=[...messages].filter(m=>!chatModSearch||m.username.toLowerCase().includes(chatModSearch.toLowerCase())).reverse();return f.slice(modCPage*10,(modCPage+1)*10);},[messages,chatModSearch,modCPage]);
   const modATotal=useMemo(()=>trades.filter(t=>!modSearch||t.raro.toLowerCase().includes(modSearch.toLowerCase())).length,[trades,modSearch]);
   const modCTotal=useMemo(()=>messages.filter(m=>!chatModSearch||m.username.toLowerCase().includes(chatModSearch.toLowerCase())).length,[messages,chatModSearch]);
 
@@ -516,17 +527,17 @@ export default function App(){
   // ── Tutorial overlay steps ──────────────────────────────────────────
   const TUTORIAL_STEPS=[
     {icon:'🏆',title:'BEM-VINDO AO TURVA TRADER!',color:G,
-      desc:'O mercado de raros do Turva.com.br. Em 3 passos rápidos você vai entender tudo sobre o site.',
-      dicas:[]},
-    {icon:'⚔',title:'ABA MERCADO',color:'#7bb8ff',
-      desc:'Aqui você acompanha os preços históricos de todos os raros e registra novas negociações.',
-      dicas:['📊 Veja a média das últimas 20 unidades vendidas de cada raro','🔍 Clique em qualquer raro para ver gráfico de evolução do preço','ℹ Use o botão ℹ na tabela para visão rápida do catálogo','⬆⬇ Clique nos cabeçalhos das colunas para ordenar a tabela','+ Use REGISTRAR no canto superior direito para cadastrar negociações']},
-    {icon:'📊',title:'ABA MEU PAINEL',color:'#69db7c',
-      desc:'Seu portfólio pessoal. Registre compras e vendas e acompanhe seu desempenho em tempo real.',
-      dicas:['🛒 Clique em + OPERAÇÃO para registrar uma compra ou venda','💰 Escolha entre PREÇO TOTAL ou PREÇO POR UNIDADE','📦 "Usar preço do catálogo" preenche o valor automaticamente','🎁 Raros ganhos de presente? Registre com preço 0c','📈 Veja o VALOR EM MERCADO: quanto seu estoque vale hoje']},
-    {icon:'🤝',title:'ABA NEGOCIAÇÕES',color:'#e599f7',
-      desc:'Encontre compradores e vendedores. Publique ordens e feche negócios com outros traders.',
-      dicas:['⏱ Ordens ficam ativas por 72 horas e somem automaticamente','📦 Adicione vários raros numa mesma ordem','🛒 Filtre por COMPRO ou VENDO para achar o que precisa','✎ Edite ou exclua suas próprias ordens a qualquer momento']},
+      desc:'Este é o mercado de raros oficial do Turva.com.br! Aqui você acompanha preços, controla seus investimentos em raros e negocia com outros jogadores. Vamos te mostrar tudo em 3 passos rápidos.',
+      dicas:['👉 Você pode rever este tutorial quando quiser pelo botão "? TUTORIAL" no topo']},
+    {icon:'⚔',title:'1. ABA MERCADO',color:'#7bb8ff',
+      desc:'É a página de cotações dos raros. Aqui você descobre quanto cada raro está valendo de verdade, com base nas negociações reais entre jogadores.',
+      dicas:['💡 BENEFÍCIO: saiba o preço justo antes de comprar ou vender um raro','📊 A coluna MÉDIA mostra o valor médio das últimas 20 unidades vendidas','🔍 Clique em qualquer raro para ver o gráfico de evolução do preço e o histórico','ℹ O botão ℹ abre uma ficha rápida com preço de lançamento, pixels e data','⬆⬇ Clique nos títulos das colunas para ordenar (mais caro, mais negociado, etc.)','➕ Registrou uma troca? Use o botão REGISTRAR no topo direito']},
+    {icon:'📊',title:'2. ABA MEU PAINEL',color:'#69db7c',
+      desc:'É a sua carteira pessoal de raros. Registre tudo que você compra e vende para saber exatamente quanto lucrou e quanto seu acervo vale hoje.',
+      dicas:['💡 BENEFÍCIO: descubra se você está tendo lucro ou prejuízo de verdade','💰 VALOR DE MERCADO mostra quanto seu estoque vale pelo preço atual','📈 MARGEM DE LUCRO mostra em % o quanto você ganhou sobre o investido','🛒 Use + OPERAÇÃO para registrar uma compra ou venda','📦 "Usar preço do catálogo" preenche o valor automaticamente','🎁 Ganhou um raro de presente? Registre com preço 0c']},
+    {icon:'🤝',title:'3. ABA NEGOCIAÇÕES',color:'#e599f7',
+      desc:'É o mural de compra e venda. Anuncie o que você quer comprar ou vender, e veja o que os outros jogadores estão procurando.',
+      dicas:['💡 BENEFÍCIO: encontre compradores e vendedores sem ficar perguntando no hotel','📢 Publique uma ordem com + NOVA ORDEM (pode incluir vários raros de uma vez)','⏱ Cada ordem fica ativa por 72 horas e some sozinha depois','🛒 Filtre por COMPRO ou VENDO para achar rápido o que precisa','✎ Suas ordens podem ser editadas ou apagadas a qualquer momento','🎉 Pronto! Agora é só explorar o site. Bons negócios!']},
   ];
 
   function completeTutorial(){localStorage.setItem('tt-tutorial-done','1');setShowTutorialOverlay(false);setTutorialStep(0);}
@@ -588,7 +599,7 @@ export default function App(){
           {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR</button>}
           {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
           {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
-          <button style={{...btnG,fontSize:'16px',padding:'5px 10px',border:'1px solid #664400',color:'#aa8833'}} onClick={()=>setShowTutorial(true)}>?</button>
+          <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
           <button style={{...btnG,fontSize:'16px',padding:'5px 10px'}} onClick={doLogout}>SAIR</button>
         </div>
       </header>
@@ -736,40 +747,47 @@ export default function App(){
                   </div>
                 )}
 
-                <div style={{...card,marginBottom:'16px',padding:0}}>
-                  <div style={secHdr}>◆ MÉDIA POR DIA</div>
-                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                    <thead><tr>{['DATA','NEG.','MÉDIA/UN'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
-                    <tbody>{dailyAvg.map((row,i)=>(
-                      <tr key={row.date} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                        <td style={{...td,color:'#7a5a30'}}>{fmtDate(row.date)}</td>
-                        <td style={{...td,color:'#664400'}}>{row.count}</td>
-                        <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{row.avg}c</td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-
-                <div style={{...card,padding:0}}>
-                  <div style={secHdr}>◆ HISTÓRICO COMPLETO</div>
+                <div style={{...card,padding:0,marginBottom:'70px'}}>
+                  <div style={{...secHdr,gap:'12px'}}>
+                    <span>◆ {histView==='dia'?'MÉDIA POR DIA':'HISTÓRICO COMPLETO'}</span>
+                    <button style={{...btnD,fontSize:'16px',padding:'5px 14px'}} onClick={()=>setHistView(v=>v==='dia'?'completo':'dia')}>
+                      {histView==='dia'?'Ver negociações completas →':'Ver média por dia →'}
+                    </button>
+                  </div>
                   <div style={{overflowX:'auto'}}>
-                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                      <thead><tr>{['DATA','QTD','TOTAL','PREÇO/UN','VENDEDOR','COMPRADOR','LANÇADO POR'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
-                      <tbody>
-                        {!selTrades.length&&<tr><td colSpan={7} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
-                        {selTrades.map((t,i)=>(
-                          <tr key={t.id} className="rrow" style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                            <td style={{...td,color:'#6a4a20'}}>{fmtDate(t.data)}</td>
-                            <td style={{...td,color:'#7a5a30'}}>{t.quantidade}</td>
-                            <td style={{...td,color:'#aa8855'}}>{t.precoVenda}c</td>
-                            <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.precoPorUnidade}c</td>
-                            <td style={{...td,color:'#7bb8ff'}}>{t.vendedor}</td>
-                            <td style={{...td,color:'#7dffaa'}}>{t.comprador}</td>
-                            <td style={{...td,color:'#4a3010',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    {histView==='dia'?(
+                      <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
+                        <thead><tr>{['DATA','UNID. VENDIDAS','MÉDIA/UN'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {!dailyAvg.length&&<tr><td colSpan={3} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
+                          {dailyAvg.map((row,i)=>(
+                            <tr key={row.date} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
+                              <td style={{...td,color:'#7a5a30'}}>{fmtDate(row.date)}</td>
+                              <td style={{...td,color:'#664400'}}>{row.units} un.</td>
+                              <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{row.avg}c</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ):(
+                      <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
+                        <thead><tr>{['DATA','QTD','TOTAL','PREÇO/UN','VENDEDOR','COMPRADOR','LANÇADO POR'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {!selTrades.length&&<tr><td colSpan={7} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
+                          {selTrades.map((t,i)=>(
+                            <tr key={t.id} className="rrow" style={{background:i%2===0?'#0d0800':'#0a0600'}}>
+                              <td style={{...td,color:'#6a4a20'}}>{fmtDate(t.data)}</td>
+                              <td style={{...td,color:'#7a5a30'}}>{t.quantidade}</td>
+                              <td style={{...td,color:'#aa8855'}}>{t.precoVenda}c</td>
+                              <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.precoPorUnidade}c</td>
+                              <td style={{...td,color:'#7bb8ff'}}>{t.vendedor}</td>
+                              <td style={{...td,color:'#7dffaa'}}>{t.comprador}</td>
+                              <td style={{...td,color:'#4a3010',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 </div>
               </div>
@@ -785,15 +803,13 @@ export default function App(){
             <span style={{fontSize:'20px'}}>📊</span>
             <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>MEU PAINEL</div><div style={{color:'#886633',fontSize:'15px'}}>Registre compras e vendas e saiba seu patrimônio em raros. Acompanhe lucro/prejuízo, capital parado e taxa de acerto — um gerenciador de carteira completo!</div></div>
           </div>
-          <div style={{overflow:'auto',flex:1,padding:'18px',background:'#090600'}}>
+          <div style={{overflow:'auto',flex:1,padding:'18px',paddingBottom:'80px',background:'#090600'}}>
           <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(200px,1fr))',gap:'10px',marginBottom:'16px'}}>
             {[
+              {l:'ESTOQUE PARADO',v:`${totals.parado}c`,sub:'custo médio × estoque',color:G},
               {l:'BALANÇO ATUAL',v:`${totals.balanco>=0?'+':''}${totals.balanco}c`,sub:totals.balanco>=0?'lucro acumulado':'prejuízo acumulado',color:totals.balanco>=0?'#69db7c':'#f66'},
-              {l:'LUCRO TOTAL',v:`${totals.lucroTotal>=0?'+':''}${totals.lucroTotal}c`,sub:'das vendas realizadas',color:totals.lucroTotal>=0?'#63e6be':'#ff8855'},
-              {l:'VALOR EM MERCADO',v:totals.mktTotal?`${totals.mktTotal}c`:'—',sub:'estoque × preço médio mercado',color:'#ffa94d'},
-              {l:'CAPITAL INVESTIDO',v:`${totals.inv}c`,sub:'total comprado',color:'#7bb8ff'},
-              {l:'CAPITAL PARADO',v:`${totals.parado}c`,sub:'em estoque (custo)',color:G},
-              {l:'MARGEM DE LUCRO',v:totals.comVendas?`${totals.margem>=0?'+':''}${totals.margem}%`:'—',sub:totals.comVendas?`média em ${totals.comVendas} raro(s) c/ venda`:'nenhuma venda ainda',color:totals.margem>=0?'#e599f7':'#ff8855'},
+              {l:'VALOR DE MERCADO',v:totals.mktTotal?`${totals.mktTotal}c`:'—',sub:'estoque × média do mercado',color:'#ffa94d'},
+              {l:'MARGEM DE LUCRO',v:totals.margemGeral!==null?`${totals.margemGeral>=0?'+':''}${totals.margemGeral}%`:'—',sub:'ganho total sobre o investido',color:totals.margemGeral>=0?'#e599f7':'#ff8855'},
             ].map(s=>(
               <div key={s.l} style={{...card,padding:'14px 18px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
                 <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'8px',letterSpacing:'1px'}}>{s.l}</div>
@@ -816,7 +832,7 @@ export default function App(){
             <div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
                 <thead><tr>
-                  {[['',''],['RARO','raro'],['COMPRADOS','comprados'],['VENDIDOS','vendidos'],['ESTOQUE','estoque'],['CUSTO MÉD','custo'],['P.MERCADO','mktPrice'],['VL.MERCADO','mktValue'],['INVESTIDO','investido'],['VENDIDO','vendido'],['LUCRO','lucro'],['','']].map(([label,col])=>(
+                  {[['',''],['RARO','raro'],['COMPRADOS','comprados'],['VENDIDOS','vendidos'],['ESTOQUE','estoque'],['CUSTO MÉD','custo'],['INVESTIDO','investido'],['VALOR MERC.','mktPrice'],['VALOR MERC. TOTAL','mktValue'],['VENDIDO','vendido'],['LUCRO','lucro'],['','']].map(([label,col])=>(
                     <th key={label||col} style={{...th,...(col?{cursor:'pointer',userSelect:'none'}:{})}}
                       onClick={()=>{if(!col)return;if(pSort===col)setPSortDir(d=>d==='asc'?'desc':'asc');else{setPSort(col);setPSortDir('desc');}}}>
                       {label}{col&&pSort===col?<span style={{marginLeft:'4px',color:G}}>{pSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#3a2a10',fontSize:'9px'}}>{col?'⇅':''}</span>}
@@ -835,9 +851,9 @@ export default function App(){
                       <td style={{...td,color:'#7dffaa'}}>{item.vendidos}</td>
                       <td style={{...td,color:item.estoque>0?G:'#4a3010'}}>{item.estoque}</td>
                       <td style={{...td,color:'#aa8855'}}>{item.custo}c</td>
+                      <td style={{...td,color:'#7bb8ff'}}>{item.investido}c</td>
                       <td style={{...td,color:item.mktPrice>0?'#ffa94d':'#3a2a10',fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{item.mktPrice>0?`${item.mktPrice}c`:'—'}</td>
                       <td style={{...td,color:item.mktValue>0?'#ffa94d':'#3a2a10',fontWeight:item.mktValue>0?'bold':'normal'}}>{item.mktValue>0?`${item.mktValue}c`:'—'}</td>
-                      <td style={{...td,color:'#7bb8ff'}}>{item.investido}c</td>
                       <td style={{...td,color:'#7dffaa'}}>{item.vendido}c</td>
                       <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:item.lucro>=0?'#69db7c':'#f66'}}>{item.lucro>=0?'+':''}{item.lucro}c</td>
                       <td style={{...td,whiteSpace:'nowrap'}}>
@@ -850,7 +866,7 @@ export default function App(){
                   );})}
                 </tbody>
               </table>
-              <Paginator page={pPage} setPage={setPPage} total={filteredPStats.length} isMobile={isMobile}/>
+              <Paginator page={pPage} setPage={setPPage} total={filteredPStats.length} size={10} isMobile={isMobile}/>
             </div>
           </div>
           </div>
@@ -988,13 +1004,13 @@ export default function App(){
               <span>◆ MODERAÇÃO DO CHAT — {messages.length} mensagens</span>
               <input className="inp" style={{...inp,width:'160px',padding:'4px 10px',fontSize:'16px'}} placeholder="filtrar usuário..." value={chatModSearch} onChange={e=>setChatModSearch(e.target.value)}/>
             </div>
-            <div style={{overflowX:'auto',maxHeight:'300px',overflow:'auto'}}>
+            <div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                <thead><tr>{['HORA','USUÁRIO','MENSAGEM',''].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                <thead><tr>{['DATA/HORA','USUÁRIO','MENSAGEM',''].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
                 <tbody>
                   {modCItems.map((m,i)=>(
                     <tr key={m.id} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                      <td style={{...td,color:'#4a3010',width:'60px'}}>{fmtTime(m.created_at)}</td>
+                      <td style={{...td,color:'#7a5a30',whiteSpace:'nowrap'}}>{fmtDate(m.created_at?.split('T')[0])} <span style={{color:'#4a3010'}}>{fmtTime(m.created_at)}</span></td>
                       <td style={{...td,color:G,whiteSpace:'nowrap'}}>{m.username}</td>
                       <td style={{...td,color:'#c8a870',maxWidth:'400px',whiteSpace:'normal',wordBreak:'break-word'}}>{m.message}</td>
                       <td style={td}>
@@ -1005,7 +1021,7 @@ export default function App(){
                   {!messages.length&&<tr><td colSpan={4} style={{...td,textAlign:'center',color:'#2a1800',padding:'24px'}}>Nenhuma mensagem no chat.</td></tr>}
                 </tbody>
               </table>
-              <Paginator page={modCPage} setPage={setModCPage} total={modCTotal} isMobile={isMobile}/>
+              <Paginator page={modCPage} setPage={setModCPage} total={modCTotal} size={10} isMobile={isMobile}/>
             </div>
           </div>
 
@@ -1063,7 +1079,7 @@ export default function App(){
       )}
 
       {/* ══ CHAT WIDGET ══ */}
-      <div className="chat-widget" style={{position:'fixed',bottom:'32px',right:'20px',zIndex:200,width:isMobile?'calc(100vw - 16px)':'300px'}}>
+      <div className="chat-widget" style={{position:'fixed',bottom:'32px',right:'20px',zIndex:90,width:isMobile?'calc(100vw - 16px)':'300px'}}>
         {/* Header */}
         <div onClick={()=>setChatOpen(p=>!p)} style={{background:`linear-gradient(135deg,#1a1000,${BG3})`,border:`2px solid ${G}`,borderBottom:chatOpen?`1px solid ${G2}`:`2px solid ${G}`,padding:'8px 14px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
           <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'9px',color:G,display:'flex',alignItems:'center',gap:'8px'}}>
@@ -1355,8 +1371,8 @@ export default function App(){
       </Modal>
 
       {/* Selo Fã-site oficial */}
-      <a href="https://www.turva.com.br" target="_blank" rel="noopener noreferrer" title="Fã-site oficial do Turva" style={{position:'fixed',bottom:'40px',left:'16px',zIndex:98,display:'block',transition:'all .15s',filter:'drop-shadow(2px 2px 4px rgba(0,0,0,0.6))'}} onMouseEnter={e=>{e.currentTarget.style.transform='scale(1.08)';e.currentTarget.style.filter=`drop-shadow(0 0 10px ${G}66)`;}} onMouseLeave={e=>{e.currentTarget.style.transform='scale(1)';e.currentTarget.style.filter='drop-shadow(2px 2px 4px rgba(0,0,0,0.6))';}}>
-        <img src={FANSITE_BADGE} alt="Fã-site oficial do Turva" style={{display:'block',border:`2px solid ${G2}`,width:isMobile?'98px':'123px'}}/>
+      <a href="https://www.turva.com.br" target="_blank" rel="noopener noreferrer" title="Fã-site oficial do Turva" style={{position:'fixed',bottom:'38px',left:'10px',zIndex:88,display:'block',transition:'all .15s',filter:'drop-shadow(2px 2px 4px rgba(0,0,0,0.6))',opacity:0.85}} onMouseEnter={e=>{e.currentTarget.style.transform='scale(1.08)';e.currentTarget.style.filter=`drop-shadow(0 0 10px ${G}66)`;}} onMouseLeave={e=>{e.currentTarget.style.transform='scale(1)';e.currentTarget.style.filter='drop-shadow(2px 2px 4px rgba(0,0,0,0.6))';}}>
+        <img src={FANSITE_BADGE} alt="Fã-site oficial do Turva" style={{display:'block',border:`2px solid ${G2}`,width:isMobile?'70px':'85px'}}/>
       </a>
 
       {/* Footer */}
