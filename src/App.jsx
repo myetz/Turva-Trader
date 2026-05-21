@@ -100,6 +100,9 @@ export default function App(){
   const [viewUser,setViewUser]=useState('');
   const [viewUserData,setViewUserData]=useState(null);
   const [allUsers,setAllUsers]=useState([]);
+  const [allUsersFull,setAllUsersFull]=useState([]);
+  const [pwResetUser,setPwResetUser]=useState('');
+  const [pwResetVal,setPwResetVal]=useState('');
   // Chat
   const [chatOpen,setChatOpen]=useState(false);
   const [chatInput,setChatInput]=useState('');
@@ -107,6 +110,8 @@ export default function App(){
   // Modals
   const [showTM,setShowTM]=useState(false);
   const [showTutorial,setShowTutorial]=useState(false);
+  const [showAccount,setShowAccount]=useState(false);
+  const [accForm,setAccForm]=useState({atual:'',nova:'',confirma:''});
   const [showTutorialOverlay,setShowTutorialOverlay]=useState(false);
   const [tutorialStep,setTutorialStep]=useState(0);
   const [showOM,setShowOM]=useState(false);
@@ -237,9 +242,43 @@ export default function App(){
     ]);
     if(usersR.data){
       const comRegistro=new Set((portR.data||[]).map(p=>p.username));
-      // Apenas jogadores que possuem ao menos 1 registro no painel
-      setAllUsers(usersR.data.filter(u=>comRegistro.has(u.username)));
+      setAllUsersFull(usersR.data); // lista completa (p/ reset de senha)
+      setAllUsers(usersR.data.filter(u=>comRegistro.has(u.username))); // só com registros (p/ painel)
     }
+  }
+
+  async function doResetPassword(){
+    if(!pwResetUser){flash('Selecione um usuário.','error');return;}
+    if(!pwResetVal||pwResetVal.length<4){flash('Senha mínima: 4 caracteres.','error');return;}
+    setLoading(true);
+    const hashed=await hashPassword(pwResetVal);
+    const {error}=await supabase.from('users').update({password:hashed}).eq('username',pwResetUser);
+    setLoading(false);
+    if(error){flash('Erro ao redefinir senha.','error');return;}
+    flash(`Senha de "${pwResetUser}" redefinida com sucesso!`,'success');
+    setPwResetUser('');setPwResetVal('');
+  }
+
+  async function doChangePassword(){
+    if(!accForm.atual||!accForm.nova||!accForm.confirma){flash('Preencha todos os campos.','error');return;}
+    if(accForm.nova!==accForm.confirma){flash('A nova senha e a confirmação não conferem.','error');return;}
+    if(accForm.nova.length<4){flash('A nova senha precisa ter no mínimo 4 caracteres.','error');return;}
+    setLoading(true);
+    // Verifica a senha atual (testa hash novo e legado)
+    const hashedAtual=await hashPassword(accForm.atual);
+    let {data:check}=await supabase.from('users').select('id,password').eq('username',user.username).maybeSingle();
+    if(!check||(check.password!==hashedAtual&&check.password!==accForm.atual)){
+      setLoading(false);flash('Senha atual incorreta.','error');return;
+    }
+    const hashedNova=await hashPassword(accForm.nova);
+    const {error}=await supabase.from('users').update({password:hashedNova}).eq('username',user.username);
+    setLoading(false);
+    if(error){flash('Erro ao alterar senha.','error');return;}
+    // Atualiza a sessão salva localmente
+    const updated={...user,password:hashedNova};
+    setUser(updated);localStorage.setItem('tt-user',JSON.stringify(updated));
+    setShowAccount(false);setAccForm({atual:'',nova:'',confirma:''});
+    flash('Senha alterada com sucesso! 🔒','success');
   }
 
   async function loadViewUser(uname){
@@ -623,6 +662,7 @@ export default function App(){
           {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
           {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
           <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
+          <button style={{...btnG,fontSize:'15px',padding:'5px 10px',border:'1px solid #2a1800',color:'#aa8855'}} onClick={()=>{setAccForm({atual:'',nova:'',confirma:''});setShowAccount(true);}}>⚙ MINHA CONTA</button>
           <button style={{...btnG,fontSize:'16px',padding:'5px 10px'}} onClick={doLogout}>SAIR</button>
         </div>
       </header>
@@ -1051,6 +1091,28 @@ export default function App(){
             </div>
           </div>
 
+          {/* Reset de senha */}
+          <div style={{...card,padding:0,marginTop:'18px'}}>
+            <div style={{...secHdr,color:'#ff8855'}}>🔑 REDEFINIR SENHA DE USUÁRIO</div>
+            <div style={{padding:'14px 16px'}}>
+              <div style={{color:'#886633',fontSize:'15px',marginBottom:'12px'}}>Use esta ferramenta quando um jogador esquecer a senha. Você define uma senha nova, repassa para ele, e ele pode trocar depois.</div>
+              <div style={{display:'flex',gap:'8px',alignItems:'flex-end',flexWrap:'wrap'}}>
+                <div style={{flex:'1 1 180px'}}>
+                  <label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>USUÁRIO</label>
+                  <select style={{...sel,padding:'8px 10px',fontSize:'17px'}} value={pwResetUser} onChange={e=>setPwResetUser(e.target.value)}>
+                    <option value="">— selecionar —</option>
+                    {allUsersFull.map(u=><option key={u.id} value={u.username}>{u.username}{u.is_admin?' (admin)':''}</option>)}
+                  </select>
+                </div>
+                <div style={{flex:'1 1 180px'}}>
+                  <label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>NOVA SENHA</label>
+                  <input className="inp" style={{...inp,padding:'8px 10px'}} type="text" placeholder="mín. 4 caracteres" value={pwResetVal} onChange={e=>setPwResetVal(e.target.value)}/>
+                </div>
+                <button style={{...btnY,padding:'9px 18px',fontSize:'17px',opacity:loading?0.6:1}} onClick={doResetPassword} disabled={loading}>{loading?'...':'✓ REDEFINIR'}</button>
+              </div>
+            </div>
+          </div>
+
           {/* User panel viewer */}
           <div style={{...card,padding:0,marginTop:'18px'}}>
             <div style={secHdr}>◆ PAINEL DE USUÁRIO</div>
@@ -1370,6 +1432,20 @@ export default function App(){
             <button style={btnG} onClick={()=>{setShowPEdit(false);setEditingP(null);}}>CANCELAR</button>
           </div>
         </>}
+      </Modal>
+
+      {/* Minha Conta - trocar senha */}
+      <Modal show={showAccount} onClose={()=>setShowAccount(false)} title="⚙ MINHA CONTA" width="420px">
+        <Flash msg={msg}/>
+        <div style={{color:G,fontSize:'20px',marginBottom:'6px'}}>{user?.username}</div>
+        <div style={{color:'#886633',fontSize:'15px',marginBottom:'18px',borderBottom:'1px solid #1a1000',paddingBottom:'14px'}}>Altere sua senha abaixo. Você precisa informar a senha atual para confirmar que é você.</div>
+        <div style={{marginBottom:'13px'}}><label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>SENHA ATUAL *</label><input className="inp" style={inp} type="password" placeholder="sua senha de agora" value={accForm.atual} onChange={e=>setAccForm({...accForm,atual:e.target.value})}/></div>
+        <div style={{marginBottom:'13px'}}><label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>NOVA SENHA *</label><input className="inp" style={inp} type="password" placeholder="mín. 4 caracteres" value={accForm.nova} onChange={e=>setAccForm({...accForm,nova:e.target.value})}/></div>
+        <div style={{marginBottom:'20px'}}><label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>CONFIRMAR NOVA SENHA *</label><input className="inp" style={inp} type="password" placeholder="repita a nova senha" value={accForm.confirma} onChange={e=>setAccForm({...accForm,confirma:e.target.value})} onKeyDown={e=>e.key==='Enter'&&doChangePassword()}/></div>
+        <div style={{display:'flex',gap:'10px'}}>
+          <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doChangePassword} disabled={loading}>{loading?'SALVANDO...':'✓ ALTERAR SENHA'}</button>
+          <button style={btnG} onClick={()=>setShowAccount(false)}>CANCELAR</button>
+        </div>
       </Modal>
 
       {/* Tutorial Modal */}
