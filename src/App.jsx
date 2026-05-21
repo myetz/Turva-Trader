@@ -105,6 +105,8 @@ export default function App(){
   // Modals
   const [showTM,setShowTM]=useState(false);
   const [showTutorial,setShowTutorial]=useState(false);
+  const [showTutorialOverlay,setShowTutorialOverlay]=useState(false);
+  const [tutorialStep,setTutorialStep]=useState(0);
   const [showOM,setShowOM]=useState(false);
   const [showOrderModal,setShowOrderModal]=useState(false);
   const [showEditModal,setShowEditModal]=useState(false);
@@ -259,6 +261,7 @@ export default function App(){
     setUser(data);localStorage.setItem('tt-user',JSON.stringify(data));
     try{await loadAll(data.username);}catch(e){console.warn(e);}
     setLF({u:'',p:''});setScreen('dashboard');
+    if(!localStorage.getItem('tt-tutorial-done')){setTutorialStep(0);setShowTutorialOverlay(true);}
   }
 
   async function doRegister(){
@@ -274,6 +277,7 @@ export default function App(){
     setUser(data);localStorage.setItem('tt-user',JSON.stringify(data));
     try{await loadAll(data.username);}catch(e){console.warn(e);}
     setRF({u:'',p:'',c:''});setScreen('dashboard');flash('Bem-vindo(a)!','success');
+    setTutorialStep(0);setShowTutorialOverlay(true);
   }
 
   function doLogout(){setUser(null);setSelRaro(null);setTrades([]);setPortfolio([]);setRarities([]);setOrders([]);setMessages([]);localStorage.removeItem('tt-user');setScreen('login');}
@@ -385,6 +389,18 @@ export default function App(){
   }
 
   // ── Computed ───────────────────────────────────────────────────────
+  // Expande negociações em unidades individuais até o limite N (mais recentes primeiro)
+  function getLastNUnits(sortedItems,n){
+    const units=[];
+    for(const t of sortedItems){
+      const qty=Math.max(1,t.quantidade||1);
+      const toAdd=Math.min(qty,n-units.length);
+      for(let i=0;i<toAdd;i++)units.push(t.precoPorUnidade);
+      if(units.length>=n)break;
+    }
+    return units;
+  }
+
   const uRaros=useMemo(()=>{
     const map={};
     rarities.forEach(r=>{map[r.raro]={raro:r.raro,categoria:r.categoria||'Outros',items:[]};});
@@ -392,9 +408,16 @@ export default function App(){
     return Object.values(map).map(r=>{
       if(!r.items.length)return{...r,lastDate:null,avgPrice:0,lastPrice:0,count:0,trend:0};
       const s=[...r.items].sort((a,b)=>b.data.localeCompare(a.data));
-      const l10=s.slice(0,10),avg10=calcAvg(l10.map(t=>t.precoPorUnidade));
-      const r5=s.slice(0,Math.min(5,s.length)),r5b=s.slice(Math.min(5,s.length),10);
-      return{...r,lastDate:s[0].data,avgPrice:avg10,lastPrice:s[0].precoPorUnidade,count:r.items.length,trend:r5b.length?calcAvg(r5.map(t=>t.precoPorUnidade))-calcAvg(r5b.map(t=>t.precoPorUnidade)):0};
+      // Total de unidades vendidas (não número de negociações)
+      const totalUnits=r.items.reduce((acc,t)=>acc+Math.max(1,t.quantidade||1),0);
+      // Média das últimas 20 unidades
+      const last20=getLastNUnits(s,20);
+      const avg20=calcAvg(last20);
+      // Tendência: últimas 20 vs 20 anteriores
+      const last40=getLastNUnits(s,40);
+      const prev20=last40.slice(20);
+      const trend=prev20.length?calcAvg(last20)-calcAvg(prev20):0;
+      return{...r,lastDate:s[0].data,avgPrice:avg20,lastPrice:s[0].precoPorUnidade,count:totalUnits,trend};
     }).sort((a,b)=>{if(a.lastDate&&!b.lastDate)return -1;if(!a.lastDate&&b.lastDate)return 1;if(a.lastDate&&b.lastDate)return b.lastDate.localeCompare(a.lastDate);return a.raro.localeCompare(b.raro);});
   },[trades,rarities]);
 
@@ -430,16 +453,19 @@ export default function App(){
       const qC=item.c.reduce((s,o)=>s+o.quantidade,0),qV=item.v.reduce((s,o)=>s+o.quantidade,0);
       const inv=item.c.reduce((s,o)=>s+o.precoTotal,0),rec=item.v.reduce((s,o)=>s+o.precoTotal,0);
       const custo=qC?Math.round(inv/qC):0,pMV=qV?Math.round(rec/qV):0;
-      return{raro:item.raro,comprados:qC,vendidos:qV,estoque:qC-qV,custo,investido:inv,vendido:rec,lucroMed:pMV-custo,lucro:Math.round(rec-(qV*custo))};
+      const mktPrice=uRaros.find(r=>r.raro===item.raro)?.avgPrice||0;
+      const estoque=qC-qV;
+      const mktValue=estoque*mktPrice;
+      return{raro:item.raro,comprados:qC,vendidos:qV,estoque,custo,investido:inv,vendido:rec,lucroMed:pMV-custo,lucro:Math.round(rec-(qV*custo)),mktPrice,mktValue};
     });
-  },[portfolio]);
+  },[portfolio,uRaros]);
 
   const filteredPStats=useMemo(()=>{
     let r=[...pStats];
     if(pSearch)r=r.filter(i=>i.raro.toLowerCase().includes(pSearch.toLowerCase()));
     const numSort=(key)=>(a,b)=>pSortDir==='desc'?b[key]-a[key]:a[key]-b[key];
     const strSort=(a,b)=>pSortDir==='desc'?b.raro.localeCompare(a.raro):a.raro.localeCompare(b.raro);
-    const sorts={raro:strSort,estoque:numSort('estoque'),investido:numSort('investido'),lucro:numSort('lucro'),comprados:numSort('comprados'),vendidos:numSort('vendidos'),vendido:numSort('vendido'),custo:numSort('custo')};
+    const sorts={raro:strSort,estoque:numSort('estoque'),investido:numSort('investido'),lucro:numSort('lucro'),comprados:numSort('comprados'),vendidos:numSort('vendidos'),vendido:numSort('vendido'),custo:numSort('custo'),mktValue:numSort('mktValue'),mktPrice:numSort('mktPrice')};
     return r.sort(sorts[pSort]||strSort);
   },[pStats,pSearch,pSort,pSortDir]);
 
@@ -452,7 +478,8 @@ export default function App(){
       const avgV=i.vendido/i.vendidos,avgC=i.custo>0?i.custo:1;
       return s+(avgV/avgC);
     },0)/comVendas.length-1)*100):0;
-    return{inv,rec,parado,balanco:rec-inv,lucroTotal,margem,comVendas:comVendas.length};
+    const mktTotal=pStats.reduce((s,i)=>s+i.mktValue,0);
+    return{inv,rec,parado,balanco:rec-inv,lucroTotal,margem,comVendas:comVendas.length,mktTotal};
   },[pStats]);
 
   const filteredOrders=useMemo(()=>orderFilter==='todos'?orders:orders.filter(o=>o.tipo===orderFilter),[orders,orderFilter]);
@@ -485,6 +512,24 @@ export default function App(){
   const lbl={display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'};
 
   // ── Loading ────────────────────────────────────────────────────────
+  // ── Tutorial overlay steps ──────────────────────────────────────────
+  const TUTORIAL_STEPS=[
+    {icon:'🏆',title:'BEM-VINDO AO TURVA TRADER!',color:G,
+      desc:'O mercado de raros do Turva.com.br. Em 3 passos rápidos você vai entender tudo sobre o site.',
+      dicas:[]},
+    {icon:'⚔',title:'ABA MERCADO',color:'#7bb8ff',
+      desc:'Aqui você acompanha os preços históricos de todos os raros e registra novas negociações.',
+      dicas:['📊 Veja a média das últimas 20 unidades vendidas de cada raro','🔍 Clique em qualquer raro para ver gráfico de evolução do preço','ℹ Use o botão ℹ na tabela para visão rápida do catálogo','⬆⬇ Clique nos cabeçalhos das colunas para ordenar a tabela','+ Use REGISTRAR no canto superior direito para cadastrar negociações']},
+    {icon:'📊',title:'ABA MEU PAINEL',color:'#69db7c',
+      desc:'Seu portfólio pessoal. Registre compras e vendas e acompanhe seu desempenho em tempo real.',
+      dicas:['🛒 Clique em + OPERAÇÃO para registrar uma compra ou venda','💰 Escolha entre PREÇO TOTAL ou PREÇO POR UNIDADE','📦 "Usar preço do catálogo" preenche o valor automaticamente','🎁 Raros ganhos de presente? Registre com preço 0c','📈 Veja o VALOR EM MERCADO: quanto seu estoque vale hoje']},
+    {icon:'🤝',title:'ABA NEGOCIAÇÕES',color:'#e599f7',
+      desc:'Encontre compradores e vendedores. Publique ordens e feche negócios com outros traders.',
+      dicas:['⏱ Ordens ficam ativas por 72 horas e somem automaticamente','📦 Adicione vários raros numa mesma ordem','🛒 Filtre por COMPRO ou VENDO para achar o que precisa','✎ Edite ou exclua suas próprias ordens a qualquer momento']},
+  ];
+
+  function completeTutorial(){localStorage.setItem('tt-tutorial-done','1');setShowTutorialOverlay(false);setTutorialStep(0);}
+
   if(screen==='loading')return<div style={{fontFamily:"'VT323',monospace",background:BG,minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontFamily:"'Press Start 2P',monospace",fontSize:'14px',color:G,textShadow:`2px 2px 0 #664400`}} className="blink">◈ TURVA TRADER ◈</span></div>;
 
   // ── Auth ───────────────────────────────────────────────────────────
@@ -548,6 +593,47 @@ export default function App(){
       </header>
       <Flash msg={msg}/>
 
+      {/* ══ TUTORIAL OVERLAY ══ */}
+      {showTutorialOverlay&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.97)',zIndex:500,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+          {/* Progress dots */}
+          <div style={{display:'flex',gap:'8px',marginBottom:'28px'}}>
+            {TUTORIAL_STEPS.map((_,i)=>(
+              <div key={i} style={{width:i===tutorialStep?24:8,height:8,background:i===tutorialStep?G:'#2a1800',transition:'all .3s',cursor:'pointer'}} onClick={()=>setTutorialStep(i)}/>
+            ))}
+          </div>
+          {/* Card */}
+          <div style={{background:BG2,border:`2px solid ${TUTORIAL_STEPS[tutorialStep].color}`,boxShadow:`0 0 60px ${TUTORIAL_STEPS[tutorialStep].color}22`,padding:'32px',maxWidth:'520px',width:'100%',position:'relative',animation:'sd .25s ease'}}>
+            <div style={{textAlign:'center',marginBottom:'24px'}}>
+              <div style={{fontSize:'48px',marginBottom:'12px'}}>{TUTORIAL_STEPS[tutorialStep].icon}</div>
+              <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'12px',color:TUTORIAL_STEPS[tutorialStep].color,marginBottom:'14px',letterSpacing:'1px'}}>{TUTORIAL_STEPS[tutorialStep].title}</div>
+              <div style={{color:'#c8a870',fontSize:'18px',lineHeight:1.6}}>{TUTORIAL_STEPS[tutorialStep].desc}</div>
+            </div>
+            {TUTORIAL_STEPS[tutorialStep].dicas.length>0&&(
+              <div style={{background:'#080500',border:'1px solid #1a1000',padding:'14px 16px',marginBottom:'20px'}}>
+                {TUTORIAL_STEPS[tutorialStep].dicas.map((d,i)=>(
+                  <div key={i} style={{color:'#aa8855',fontSize:'17px',marginBottom:'8px',lineHeight:1.5,display:'flex',gap:'8px'}}>
+                    <span>{d}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Buttons */}
+            <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
+              {tutorialStep>0&&<button style={{background:BG3,border:`1px solid #2a1800`,color:'#664400',padding:'10px 16px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer'}} onClick={()=>setTutorialStep(s=>s-1)}>◀ anterior</button>}
+              {tutorialStep<TUTORIAL_STEPS.length-1
+                ?<button style={{background:TUTORIAL_STEPS[tutorialStep].color,border:'none',color:'#000',padding:'12px',fontSize:'19px',fontFamily:"'VT323',monospace",cursor:'pointer',flex:1,fontWeight:'bold',letterSpacing:'1px'}} onClick={()=>setTutorialStep(s=>s+1)}>PRÓXIMO ▶</button>
+                :<button style={{background:G,border:'none',color:'#000',padding:'12px',fontSize:'19px',fontFamily:"'VT323',monospace",cursor:'pointer',flex:1,fontWeight:'bold',letterSpacing:'1px'}} onClick={completeTutorial}>✓ COMEÇAR A USAR!</button>
+              }
+            </div>
+            <div style={{textAlign:'center',marginTop:'16px'}}>
+              <span style={{color:'#3a2a10',fontSize:'15px',cursor:'pointer',textDecoration:'underline'}} onClick={completeTutorial}>pular tutorial</span>
+            </div>
+          </div>
+          <div style={{color:'#3a2a10',fontSize:'15px',marginTop:'16px',fontFamily:"'VT323',monospace"}}>{tutorialStep+1} de {TUTORIAL_STEPS.length}</div>
+        </div>
+      )}
+
       {/* ══ MERCADO ══ */}
       {tab==='mercado'&&(
         <div style={{display:'flex',flexDirection:'column',height:isMobile?'auto':'calc(100vh - 90px)',overflow:isMobile?'visible':'hidden',minHeight:isMobile?'100vh':'auto'}}>
@@ -571,7 +657,7 @@ export default function App(){
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
                     <thead><tr>
                       <th style={th}></th>
-                      {[['RARO','raro'],['CATEGORIA','categoria'],['MÉDIA ÚLT.10','avgPrice'],['ÚLTIMO','lastPrice'],['NEG.','count'],['ÚLTIMA NEG.','lastDate']].map(([label,col])=>(
+                      {[['RARO','raro'],['CATEGORIA','categoria'],['MÉDIA 20 UN','avgPrice'],['ÚLTIMO','lastPrice'],['UNID.','count'],['ÚLTIMA NEG.','lastDate']].map(([label,col])=>(
                         <th key={col} style={{...th,cursor:'pointer',userSelect:'none'}} onClick={()=>mColClick(col)}>
                           {label}{mSort===col?<span style={{marginLeft:'4px',color:G}}>{mSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#3a2a10',fontSize:'9px'}}>⇅</span>}
                         </th>
@@ -624,7 +710,7 @@ export default function App(){
                 )}
 
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'10px',marginBottom:'16px'}}>
-                  {[{l:'MÉDIA ÚLT.10',v:`${selInfo?.avgPrice||0}c`,hi:true},{l:'ÚLTIMO PREÇO',v:`${selInfo?.lastPrice||0}c`},{l:'NEGOCIAÇÕES',v:String(selInfo?.count||0)},{l:'ÚLTIMA NEG.',v:fmtDate(selInfo?.lastDate)}].map(s=>(
+                  {[{l:'MÉDIA 20 UNID.',v:`${selInfo?.avgPrice||0}c`,hi:true},{l:'ÚLTIMO PREÇO',v:`${selInfo?.lastPrice||0}c`},{l:'UNID. VENDIDAS',v:String(selInfo?.count||0)},{l:'ÚLTIMA NEG.',v:fmtDate(selInfo?.lastDate)}].map(s=>(
                     <div key={s.l} style={{...card,padding:'12px',textAlign:'center',border:s.hi?`2px solid ${G}`:'1px solid #2a1800',boxShadow:s.hi?`3px 3px 0 #443300`:'3px 3px 12px rgba(0,0,0,.6)'}}>
                       <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'8px'}}>{s.l}</div>
                       <div style={{color:s.hi?G:'#aa8855',fontSize:'20px'}}>{s.v}</div>
@@ -703,8 +789,9 @@ export default function App(){
             {[
               {l:'BALANÇO ATUAL',v:`${totals.balanco>=0?'+':''}${totals.balanco}c`,sub:totals.balanco>=0?'lucro acumulado':'prejuízo acumulado',color:totals.balanco>=0?'#69db7c':'#f66'},
               {l:'LUCRO TOTAL',v:`${totals.lucroTotal>=0?'+':''}${totals.lucroTotal}c`,sub:'das vendas realizadas',color:totals.lucroTotal>=0?'#63e6be':'#ff8855'},
+              {l:'VALOR EM MERCADO',v:totals.mktTotal?`${totals.mktTotal}c`:'—',sub:'estoque × preço médio mercado',color:'#ffa94d'},
               {l:'CAPITAL INVESTIDO',v:`${totals.inv}c`,sub:'total comprado',color:'#7bb8ff'},
-              {l:'CAPITAL PARADO',v:`${totals.parado}c`,sub:'em estoque',color:G},
+              {l:'CAPITAL PARADO',v:`${totals.parado}c`,sub:'em estoque (custo)',color:G},
               {l:'MARGEM DE LUCRO',v:totals.comVendas?`${totals.margem>=0?'+':''}${totals.margem}%`:'—',sub:totals.comVendas?`média em ${totals.comVendas} raro(s) c/ venda`:'nenhuma venda ainda',color:totals.margem>=0?'#e599f7':'#ff8855'},
             ].map(s=>(
               <div key={s.l} style={{...card,padding:'14px 18px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
@@ -728,7 +815,7 @@ export default function App(){
             <div style={{overflowX:'auto'}}>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
                 <thead><tr>
-                  {[['',''],['RARO','raro'],['COMPRADOS','comprados'],['VENDIDOS','vendidos'],['ESTOQUE','estoque'],['CUSTO MÉD','custo'],['INVESTIDO','investido'],['VENDIDO','vendido'],['LUCRO','lucro'],['','']].map(([label,col])=>(
+                  {[['',''],['RARO','raro'],['COMPRADOS','comprados'],['VENDIDOS','vendidos'],['ESTOQUE','estoque'],['CUSTO MÉD','custo'],['P.MERCADO','mktPrice'],['VL.MERCADO','mktValue'],['INVESTIDO','investido'],['VENDIDO','vendido'],['LUCRO','lucro'],['','']].map(([label,col])=>(
                     <th key={label||col} style={{...th,...(col?{cursor:'pointer',userSelect:'none'}:{})}}
                       onClick={()=>{if(!col)return;if(pSort===col)setPSortDir(d=>d==='asc'?'desc':'asc');else{setPSort(col);setPSortDir('desc');}}}>
                       {label}{col&&pSort===col?<span style={{marginLeft:'4px',color:G}}>{pSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#3a2a10',fontSize:'9px'}}>{col?'⇅':''}</span>}
@@ -747,6 +834,8 @@ export default function App(){
                       <td style={{...td,color:'#7dffaa'}}>{item.vendidos}</td>
                       <td style={{...td,color:item.estoque>0?G:'#4a3010'}}>{item.estoque}</td>
                       <td style={{...td,color:'#aa8855'}}>{item.custo}c</td>
+                      <td style={{...td,color:item.mktPrice>0?'#ffa94d':'#3a2a10',fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{item.mktPrice>0?`${item.mktPrice}c`:'—'}</td>
+                      <td style={{...td,color:item.mktValue>0?'#ffa94d':'#3a2a10',fontWeight:item.mktValue>0?'bold':'normal'}}>{item.mktValue>0?`${item.mktValue}c`:'—'}</td>
                       <td style={{...td,color:'#7bb8ff'}}>{item.investido}c</td>
                       <td style={{...td,color:'#7dffaa'}}>{item.vendido}c</td>
                       <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:item.lucro>=0?'#69db7c':'#f66'}}>{item.lucro>=0?'+':''}{item.lucro}c</td>
@@ -1037,7 +1126,7 @@ export default function App(){
               <div style={{borderTop:`1px solid #1a1000`,paddingTop:'14px'}}>
                 <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#4a3010',marginBottom:'10px',letterSpacing:'1px'}}>DADOS DE MERCADO</div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'10px'}}>
-                  {[{l:'MÉDIA ÚLT.10',v:`${quickInfo.avgPrice}c`,c:G},{l:'ÚLTIMO',v:`${quickInfo.lastPrice}c`,c:'#aa8855'},{l:'NEGOCIAÇÕES',v:String(quickInfo.count),c:'#664400'}].map(s=>(
+                  {[{l:'MÉDIA 20 UNID.',v:`${quickInfo.avgPrice}c`,c:G},{l:'ÚLTIMO',v:`${quickInfo.lastPrice}c`,c:'#aa8855'},{l:'UNID. VENDIDAS',v:String(quickInfo.count),c:'#664400'}].map(s=>(
                     <div key={s.l} style={{...card,padding:'10px',textAlign:'center'}}>
                       <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'6px'}}>{s.l}</div>
                       <div style={{color:s.c,fontSize:'17px'}}>{s.v}</div>
