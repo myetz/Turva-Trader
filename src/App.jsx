@@ -19,7 +19,7 @@ const Badge=({cat})=>{const c=CAT_C[cat]||'#aaa';return<span style={{background:
 
 const Flash=({msg})=>{if(!msg?.text)return null;const m={error:{bg:'#1a0000',b:'#f44',t:'#f88'},success:{bg:'#001500',b:'#4f4',t:'#8f8'},info:{bg:'#1a1000',b:G,t:G}};const c=m[msg.type]||m.info;return<div style={{background:c.bg,borderBottom:`2px solid ${c.b}`,padding:'9px 24px',fontSize:'17px',color:c.t,textAlign:'center',fontFamily:"'VT323',monospace"}}>{msg.text}</div>;};
 
-const ChartTip=({active,payload,label})=>{if(!active||!payload?.length)return null;const d=payload[0].payload;return<div style={{background:'#1a1208',border:`2px solid ${G}`,padding:'10px 14px',fontFamily:"'VT323',monospace"}}><div style={{color:'#887755',fontSize:'15px',marginBottom:'4px'}}>{fmtDate(label)}</div><div style={{color:G,fontFamily:"'Press Start 2P',monospace",fontSize:'12px',marginBottom:'4px'}}>{payload[0].value}c <span style={{fontSize:'9px',color:'#aa8855'}}>média/un</span></div><div style={{color:'#7dffaa',fontSize:'16px'}}>{d.units} unidade{d.units!==1?'s':''} negociada{d.units!==1?'s':''}</div></div>;};
+const ChartTip=({active,payload,label})=>{if(!active||!payload?.length)return null;const d=payload[0].payload;return<div style={{background:'#1a1208',border:`2px solid ${G}`,padding:'10px 14px',fontFamily:"'VT323',monospace"}}><div style={{color:'#b3a075',fontSize:'15px',marginBottom:'4px'}}>{fmtDate(label)}</div><div style={{color:G,fontFamily:"'Press Start 2P',monospace",fontSize:'12px',marginBottom:'4px'}}>{payload[0].value}c <span style={{fontSize:'9px',color:'#cdac72'}}>média/un</span></div><div style={{color:'#7dffaa',fontSize:'16px'}}>{d.units} unidade{d.units!==1?'s':''} negociada{d.units!==1?'s':''}</div></div>;};
 
 const Corners=()=><>{['tl','tr','bl','br'].map(p=><div key={p} style={{position:'absolute',width:'10px',height:'10px',background:G,top:p[0]==='t'?-2:'auto',bottom:p[0]==='b'?-2:'auto',left:p[1]==='l'?-2:'auto',right:p[1]==='r'?-2:'auto'}}/>)}</>;
 
@@ -38,10 +38,10 @@ const Paginator=({page,setPage,total,size=15,isMobile})=>{
   return(
     <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 16px',borderTop:'1px solid #1a1000',justifyContent:'center',fontFamily:"'VT323',monospace",fontSize:'17px',background:'#0a0800',flexWrap:'wrap'}}>
       <button style={{...btnS,...(page===0?{opacity:.3,cursor:'default'}:{})}} disabled={page===0} onClick={()=>setPage(p=>p-1)}>◀ anterior</button>
-      <span style={{color:'#aa8855'}}>{from}–{to}</span>
-      <span style={{color:'#4a3010'}}>de <span style={{color:G}}>{total}</span></span>
-      <span style={{color:'#3a2a10'}}>·</span>
-      <span style={{color:'#664400'}}>pág {page+1}/{pages}</span>
+      <span style={{color:'#cdac72'}}>{from}–{to}</span>
+      <span style={{color:'#9a7d45'}}>de <span style={{color:G}}>{total}</span></span>
+      <span style={{color:'#7a6035'}}>·</span>
+      <span style={{color:'#b89545'}}>pág {page+1}/{pages}</span>
       <button style={{...btnS,...(page>=pages-1?{opacity:.3,cursor:'default'}:{})}} disabled={page>=pages-1} onClick={()=>setPage(p=>p+1)}>próxima ▶</button>
     </div>
   );
@@ -101,6 +101,7 @@ export default function App(){
   const [viewUserData,setViewUserData]=useState(null);
   const [allUsers,setAllUsers]=useState([]);
   const [allUsersFull,setAllUsersFull]=useState([]);
+  const [accessLogs,setAccessLogs]=useState([]);
   const [pwResetUser,setPwResetUser]=useState('');
   const [pwResetVal,setPwResetVal]=useState('');
   // Chat
@@ -245,6 +246,9 @@ export default function App(){
       setAllUsersFull(usersR.data); // lista completa (p/ reset de senha)
       setAllUsers(usersR.data.filter(u=>comRegistro.has(u.username))); // só com registros (p/ painel)
     }
+    // Carrega logs de acesso (últimos 2000)
+    const {data:logs}=await supabase.from('access_logs').select('*').order('created_at',{ascending:false}).limit(2000);
+    if(logs)setAccessLogs(logs);
   }
 
   async function doResetPassword(){
@@ -308,6 +312,10 @@ export default function App(){
     return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
   }
 
+  async function logAccess(uname){
+    try{await supabase.from('access_logs').insert({username:uname,event:'login'});}catch(e){console.warn('log:',e);}
+  }
+
   async function doLogin(){
     if(!lF.u||!lF.p){flash('Preencha todos os campos.','error');return;}
     setLoading(true);
@@ -327,6 +335,7 @@ export default function App(){
     setUser(data);localStorage.setItem('tt-user',JSON.stringify(data));
     try{await loadAll(data.username);}catch(e){console.warn(e);}
     setLF({u:'',p:''});setScreen('dashboard');
+    logAccess(data.username);
     if(!localStorage.getItem('tt-tutorial-done')){setTutorialStep(0);setShowTutorialOverlay(true);}
   }
 
@@ -344,6 +353,7 @@ export default function App(){
     setUser(data);localStorage.setItem('tt-user',JSON.stringify(data));
     try{await loadAll(data.username);}catch(e){console.warn(e);}
     setRF({u:'',p:'',c:''});setScreen('dashboard');flash('Bem-vindo(a)!','success');
+    logAccess(data.username);
     setTutorialStep(0);setShowTutorialOverlay(true);
   }
 
@@ -558,6 +568,38 @@ export default function App(){
 
   const filteredOrders=useMemo(()=>orderFilter==='todos'?orders:orders.filter(o=>o.tipo===orderFilter),[orders,orderFilter]);
 
+  // ── Insights / Analytics ──
+  const insights=useMemo(()=>{
+    const now=new Date();
+    const startToday=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+    const start7=startToday-6*86400000;
+    const start30=startToday-29*86400000;
+    let hoje=0,semana=0,mes=0;
+    const usersToday=new Set(),usersWeek=new Set();
+    const porUsuario={},porHora=Array(24).fill(0),porDia={};
+    accessLogs.forEach(l=>{
+      const t=new Date(l.created_at).getTime();
+      if(t>=startToday){hoje++;usersToday.add(l.username);}
+      if(t>=start7){semana++;usersWeek.add(l.username);}
+      if(t>=start30)mes++;
+      if(!porUsuario[l.username])porUsuario[l.username]={username:l.username,total:0,ultimo:l.created_at};
+      porUsuario[l.username].total++;
+      if(l.created_at>porUsuario[l.username].ultimo)porUsuario[l.username].ultimo=l.created_at;
+      porHora[new Date(l.created_at).getHours()]++;
+      const dk=l.created_at.split('T')[0];
+      porDia[dk]=(porDia[dk]||0)+1;
+    });
+    const ranking=Object.values(porUsuario).sort((a,b)=>b.total-a.total);
+    const horaPico=porHora.indexOf(Math.max(...porHora));
+    const dias14=[];
+    for(let i=13;i>=0;i--){
+      const d=new Date(startToday-i*86400000);
+      const k=d.toISOString().split('T')[0];
+      dias14.push({date:k,count:porDia[k]||0});
+    }
+    return{hoje,semana,mes,usersToday:usersToday.size,usersWeek:usersWeek.size,ranking,horaPico,porHora,dias14,totalLogins:accessLogs.length};
+  },[accessLogs]);
+
   // Reset pages on filter change
   useEffect(()=>setMPage(0),[search,mSort,mSortDir]);
   useEffect(()=>setPPage(0),[pSearch,pSort,pSortDir]);
@@ -578,12 +620,12 @@ export default function App(){
   const sel={background:'#080500',border:`1px solid #2a1800`,color:G,padding:'9px 12px',fontSize:'18px',width:'100%',fontFamily:"'VT323',monospace"};
   const btnY={background:G,border:`2px solid ${G2}`,color:'#000',padding:'8px 18px',fontSize:'19px',fontFamily:"'VT323',monospace",cursor:'pointer',boxShadow:`3px 3px 0 #664400`,fontWeight:'bold',transition:'all .1s',letterSpacing:'1px'};
   const btnD={background:BG3,border:`1px solid ${G}`,color:G,padding:'8px 16px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer',transition:'all .1s'};
-  const btnG={background:'transparent',border:`1px solid #2a1800`,color:'#664400',padding:'8px 14px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer'};
+  const btnG={background:'transparent',border:`1px solid #2a1800`,color:'#b89545',padding:'8px 14px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer'};
   const btnGreen={background:'#002200',border:'2px solid #4f4',color:'#4f4',padding:'4px 10px',fontSize:'17px',fontFamily:"'VT323',monospace",cursor:'pointer',transition:'all .1s'};
   const btnRed={background:'#220000',border:'2px solid #f44',color:'#f44',padding:'4px 10px',fontSize:'17px',fontFamily:"'VT323',monospace",cursor:'pointer',transition:'all .1s'};
   const th={background:`linear-gradient(135deg,#1a1000,#0f0800)`,color:G,padding:'9px 12px',textAlign:'left',borderBottom:`1px solid #2a1800`,fontFamily:"'Press Start 2P',monospace",fontSize:'8px',letterSpacing:'.5px',whiteSpace:'nowrap'};
   const td={padding:'8px 12px',borderBottom:`1px solid #160a00`,color:'#c8a870',whiteSpace:'nowrap'};
-  const lbl={display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'};
+  const lbl={display:'block',color:'#c9a85f',fontSize:'14px',marginBottom:'5px'};
 
   // ── Loading ────────────────────────────────────────────────────────
   // ── Tutorial overlay steps ──────────────────────────────────────────
@@ -614,7 +656,7 @@ export default function App(){
         <div style={{position:'fixed',inset:0,backgroundImage:`linear-gradient(${G}06 1px,transparent 1px),linear-gradient(90deg,${G}06 1px,transparent 1px)`,backgroundSize:'48px 48px',pointerEvents:'none'}}/>
         <div style={{textAlign:'center',marginBottom:'28px',position:'relative',zIndex:1}}>
           <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'18px',color:G,textShadow:`3px 3px 0 #664400,0 0 30px ${G}44`,marginBottom:'8px'}}>◈ TURVA TRADER ◈</div>
-          <div style={{color:'#3a2a10',fontSize:'16px',letterSpacing:'3px'}}>◆ MERCADO DE RAROS DO TURVA ◆</div>
+          <div style={{color:'#7a6035',fontSize:'16px',letterSpacing:'3px'}}>◆ MERCADO DE RAROS DO TURVA ◆</div>
         </div>
         <div style={{...card,width:'380px',padding:'28px 32px',position:'relative',zIndex:1,border:`2px solid ${G}`,boxShadow:`6px 6px 0 #332200,0 0 30px ${G}11`}} className="anim">
           <Corners/>
@@ -625,13 +667,13 @@ export default function App(){
               <div key={k} style={{marginBottom:'14px'}}><label style={lbl}>{l}</label><input className="inp" style={inp} type={t} placeholder={ph} value={lF[k]} onChange={e=>setLF({...lF,[k]:e.target.value})} onKeyDown={e=>e.key==='Enter'&&doLogin()}/></div>
             ))}
             <button style={{...btnY,width:'100%',textAlign:'center',marginTop:'10px',opacity:loading?0.6:1}} onClick={doLogin} disabled={loading}>{loading?'AGUARDE...':'ENTRAR →'}</button>
-            <div style={{textAlign:'center',marginTop:'18px',fontSize:'16px',color:'#3a2a10'}}>Sem conta? <span style={{color:G,cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setScreen('register');setMsg({text:'',type:'info'});}}>Criar agora</span></div>
+            <div style={{textAlign:'center',marginTop:'18px',fontSize:'16px',color:'#7a6035'}}>Sem conta? <span style={{color:G,cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setScreen('register');setMsg({text:'',type:'info'});}}>Criar agora</span></div>
           </>):(<>
             {[['USUÁRIO','u','text','seu nickname'],['SENHA','p','password','mín. 4 chars'],['CONFIRMAR','c','password','repita']].map(([l,k,t,ph])=>(
               <div key={k} style={{marginBottom:'13px'}}><label style={lbl}>{l}</label><input className="inp" style={inp} type={t} placeholder={ph} value={rF[k]} onChange={e=>setRF({...rF,[k]:e.target.value})} onKeyDown={e=>e.key==='Enter'&&doRegister()}/></div>
             ))}
             <button style={{...btnY,width:'100%',textAlign:'center',marginTop:'10px',opacity:loading?0.6:1}} onClick={doRegister} disabled={loading}>{loading?'AGUARDE...':'CRIAR CONTA →'}</button>
-            <div style={{textAlign:'center',marginTop:'18px',fontSize:'16px',color:'#3a2a10'}}>Já tem conta? <span style={{color:G,cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setScreen('login');setMsg({text:'',type:'info'});}}>Entrar</span></div>
+            <div style={{textAlign:'center',marginTop:'18px',fontSize:'16px',color:'#7a6035'}}>Já tem conta? <span style={{color:G,cursor:'pointer',textDecoration:'underline'}} onClick={()=>{setScreen('login');setMsg({text:'',type:'info'});}}>Entrar</span></div>
           </>)}
         </div>
       </div>
@@ -639,7 +681,7 @@ export default function App(){
   }
 
   // ── Dashboard ──────────────────────────────────────────────────────
-  const tabs=[['mercado','⚔ MERCADO'],['painel','📊 MEU PAINEL'],['negocios','🤝 NEGOCIAÇÕES'],...(user?.is_admin?[['mod','🛡 MODERAÇÃO']]:[])] ;
+  const tabs=[['mercado','⚔ MERCADO'],['painel','📊 MEU PAINEL'],['negocios','🤝 NEGOCIAÇÕES'],...(user?.is_admin?[['mod','🛡 MODERAÇÃO'],['insights','📈 INSIGHTS']]:[])] ;
 
   return(
     <div style={{fontFamily:"'VT323',monospace",background:BG,minHeight:'100vh',color:'#c8a870',fontSize:'18px'}}>
@@ -650,19 +692,19 @@ export default function App(){
         </div>
         {tabs.map(([id,label])=>(
           <button key={id} className={`tab-btn ${tab===id?'tab-a':'tab-i'}`}
-            style={{padding:'0 16px',fontSize:'12px',fontFamily:"'Press Start 2P',monospace",cursor:'pointer',border:'none',borderRight:`1px solid #1a1000`,borderBottom:'3px solid transparent',transition:'all .15s',background:'transparent',color:'#4a3010',letterSpacing:'.3px',...(id==='mod'&&pendingTrades.length>0?{color:'#ff6b6b'}:{})}}
+            style={{padding:'0 16px',fontSize:'12px',fontFamily:"'Press Start 2P',monospace",cursor:'pointer',border:'none',borderRight:`1px solid #1a1000`,borderBottom:'3px solid transparent',transition:'all .15s',background:'transparent',color:'#9a7d45',letterSpacing:'.3px',...(id==='mod'&&pendingTrades.length>0?{color:'#ff6b6b'}:{})}}
             onClick={()=>setTab(id)}>
             {label}{id==='mod'&&pendingTrades.length>0&&<span style={{marginLeft:'6px',background:'#f44',color:'#fff',padding:'0 5px',fontSize:'12px',fontFamily:"'VT323',monospace"}}>{pendingTrades.length}</span>}
           </button>
         ))}
         <div style={{flex:1}}/>
         <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 14px'}}>
-          <span style={{color:'#4a3010',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
+          <span style={{color:'#9a7d45',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
           {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR</button>}
           {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
           {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
           <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
-          <button style={{...btnG,fontSize:'15px',padding:'5px 10px',border:'1px solid #2a1800',color:'#aa8855'}} onClick={()=>{setAccForm({atual:'',nova:'',confirma:''});setShowAccount(true);}}>⚙ MINHA CONTA</button>
+          <button style={{...btnG,fontSize:'15px',padding:'5px 10px',border:'1px solid #2a1800',color:'#cdac72'}} onClick={()=>{setAccForm({atual:'',nova:'',confirma:''});setShowAccount(true);}}>⚙ MINHA CONTA</button>
           <button style={{...btnG,fontSize:'16px',padding:'5px 10px'}} onClick={doLogout}>SAIR</button>
         </div>
       </header>
@@ -670,42 +712,40 @@ export default function App(){
 
       {/* ══ TUTORIAL OVERLAY ══ */}
       {showTutorialOverlay&&(
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.97)',zIndex:500,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.97)',zIndex:500,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'12px',overflow:'auto'}}>
           {/* Progress dots */}
-          <div style={{display:'flex',gap:'8px',marginBottom:'28px'}}>
+          <div style={{display:'flex',gap:'7px',marginBottom:'14px'}}>
             {TUTORIAL_STEPS.map((_,i)=>(
-              <div key={i} style={{width:i===tutorialStep?24:8,height:8,background:i===tutorialStep?G:'#2a1800',transition:'all .3s',cursor:'pointer'}} onClick={()=>setTutorialStep(i)}/>
+              <div key={i} style={{width:i===tutorialStep?22:7,height:7,background:i===tutorialStep?G:'#2a1800',transition:'all .3s',cursor:'pointer'}} onClick={()=>setTutorialStep(i)}/>
             ))}
           </div>
           {/* Card */}
-          <div style={{background:BG2,border:`2px solid ${TUTORIAL_STEPS[tutorialStep].color}`,boxShadow:`0 0 60px ${TUTORIAL_STEPS[tutorialStep].color}22`,padding:'32px',maxWidth:'520px',width:'100%',position:'relative',animation:'sd .25s ease'}}>
-            <div style={{textAlign:'center',marginBottom:'24px'}}>
-              <div style={{fontSize:'48px',marginBottom:'12px'}}>{TUTORIAL_STEPS[tutorialStep].icon}</div>
-              <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'12px',color:TUTORIAL_STEPS[tutorialStep].color,marginBottom:'14px',letterSpacing:'1px'}}>{TUTORIAL_STEPS[tutorialStep].title}</div>
-              <div style={{color:'#c8a870',fontSize:'18px',lineHeight:1.6}}>{TUTORIAL_STEPS[tutorialStep].desc}</div>
+          <div style={{background:BG2,border:`2px solid ${TUTORIAL_STEPS[tutorialStep].color}`,boxShadow:`0 0 50px ${TUTORIAL_STEPS[tutorialStep].color}22`,padding:'20px 24px',maxWidth:'500px',width:'100%',position:'relative',animation:'sd .25s ease'}}>
+            <div style={{textAlign:'center',marginBottom:'14px'}}>
+              <div style={{fontSize:'32px',marginBottom:'6px'}}>{TUTORIAL_STEPS[tutorialStep].icon}</div>
+              <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'11px',color:TUTORIAL_STEPS[tutorialStep].color,marginBottom:'10px',letterSpacing:'1px'}}>{TUTORIAL_STEPS[tutorialStep].title}</div>
+              <div style={{color:'#d8b888',fontSize:'16px',lineHeight:1.45}}>{TUTORIAL_STEPS[tutorialStep].desc}</div>
             </div>
             {TUTORIAL_STEPS[tutorialStep].dicas.length>0&&(
-              <div style={{background:'#080500',border:'1px solid #1a1000',padding:'14px 16px',marginBottom:'20px'}}>
+              <div style={{background:'#080500',border:'1px solid #1a1000',padding:'12px 14px',marginBottom:'14px'}}>
                 {TUTORIAL_STEPS[tutorialStep].dicas.map((d,i)=>(
-                  <div key={i} style={{color:'#aa8855',fontSize:'17px',marginBottom:'8px',lineHeight:1.5,display:'flex',gap:'8px'}}>
-                    <span>{d}</span>
-                  </div>
+                  <div key={i} style={{color:'#cdac72',fontSize:'15px',marginBottom:'6px',lineHeight:1.35}}>{d}</div>
                 ))}
               </div>
             )}
             {/* Buttons */}
             <div style={{display:'flex',gap:'10px',alignItems:'center'}}>
-              {tutorialStep>0&&<button style={{background:BG3,border:`1px solid #2a1800`,color:'#664400',padding:'10px 16px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer'}} onClick={()=>setTutorialStep(s=>s-1)}>◀ anterior</button>}
+              {tutorialStep>0&&<button style={{background:BG3,border:`1px solid #2a1800`,color:'#b89545',padding:'9px 14px',fontSize:'17px',fontFamily:"'VT323',monospace",cursor:'pointer'}} onClick={()=>setTutorialStep(s=>s-1)}>◀ anterior</button>}
               {tutorialStep<TUTORIAL_STEPS.length-1
-                ?<button style={{background:TUTORIAL_STEPS[tutorialStep].color,border:'none',color:'#000',padding:'12px',fontSize:'19px',fontFamily:"'VT323',monospace",cursor:'pointer',flex:1,fontWeight:'bold',letterSpacing:'1px'}} onClick={()=>setTutorialStep(s=>s+1)}>PRÓXIMO ▶</button>
-                :<button style={{background:G,border:'none',color:'#000',padding:'12px',fontSize:'19px',fontFamily:"'VT323',monospace",cursor:'pointer',flex:1,fontWeight:'bold',letterSpacing:'1px'}} onClick={completeTutorial}>✓ COMEÇAR A USAR!</button>
+                ?<button style={{background:TUTORIAL_STEPS[tutorialStep].color,border:'none',color:'#000',padding:'10px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer',flex:1,fontWeight:'bold',letterSpacing:'1px'}} onClick={()=>setTutorialStep(s=>s+1)}>PRÓXIMO ▶</button>
+                :<button style={{background:G,border:'none',color:'#000',padding:'10px',fontSize:'18px',fontFamily:"'VT323',monospace",cursor:'pointer',flex:1,fontWeight:'bold',letterSpacing:'1px'}} onClick={completeTutorial}>✓ COMEÇAR A USAR!</button>
               }
             </div>
-            <div style={{textAlign:'center',marginTop:'16px'}}>
-              <span style={{color:'#3a2a10',fontSize:'15px',cursor:'pointer',textDecoration:'underline'}} onClick={completeTutorial}>pular tutorial</span>
+            <div style={{textAlign:'center',marginTop:'10px'}}>
+              <span style={{color:'#9a7d45',fontSize:'14px',cursor:'pointer',textDecoration:'underline'}} onClick={completeTutorial}>pular tutorial</span>
             </div>
           </div>
-          <div style={{color:'#3a2a10',fontSize:'15px',marginTop:'16px',fontFamily:"'VT323',monospace"}}>{tutorialStep+1} de {TUTORIAL_STEPS.length}</div>
+          <div style={{color:'#9a7d45',fontSize:'14px',marginTop:'10px',fontFamily:"'VT323',monospace"}}>{tutorialStep+1} de {TUTORIAL_STEPS.length}</div>
         </div>
       )}
 
@@ -714,7 +754,7 @@ export default function App(){
         <div style={{display:'flex',flexDirection:'column',height:isMobile?'auto':'calc(100vh - 90px)',overflow:isMobile?'visible':'hidden',minHeight:isMobile?'100vh':'auto'}}>
           <div style={{background:'linear-gradient(135deg,#1a1000,#0f0800)',borderBottom:'2px solid #2a1800',borderLeft:`4px solid ${G}`,padding:'10px 20px',display:'flex',alignItems:'center',gap:'14px',flexShrink:0}}>
             <span style={{fontSize:'20px'}}>⚔</span>
-            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>MERCADO DE RAROS</div><div style={{color:'#886633',fontSize:'15px'}}>Veja negociações e preços médios dos raros do Turva. Clique em um raro para ver histórico, gráfico de preços e dados do catálogo. Use ℹ para visão rápida.</div></div>
+            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>MERCADO DE RAROS</div><div style={{color:'#c9a85f',fontSize:'15px'}}>Veja negociações e preços médios dos raros do Turva. Clique em um raro para ver histórico, gráfico de preços e dados do catálogo. Use ℹ para visão rápida.</div></div>
           </div>
           <div style={{flex:1,overflow:'auto',padding:'18px',background:'#090600'}}>
             {!selRaro?(
@@ -724,7 +764,7 @@ export default function App(){
                   <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
                     <input className="inp" style={{...inp,width:'180px',padding:'4px 10px',fontSize:'16px'}} placeholder="🔍 buscar raro..." value={search} onChange={e=>setSearch(e.target.value)}/>
                     {(mSort!=='lastDate'||mSortDir!=='desc'||search)&&(
-                      <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#aa8855',borderColor:'#664400'}} onClick={()=>{setMSort('lastDate');setMSortDir('desc');setSearch('');}}>✕ limpar</button>
+                      <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#cdac72',borderColor:'#664400'}} onClick={()=>{setMSort('lastDate');setMSortDir('desc');setSearch('');}}>✕ limpar</button>
                     )}
                   </div>
                 </div>
@@ -734,7 +774,7 @@ export default function App(){
                       <th style={th}></th>
                       {[['RARO','raro'],['CATEGORIA','categoria'],['MÉDIA 20 UN','avgPrice'],['ÚLTIMO','lastPrice'],['UNID.','count'],['ÚLTIMA NEG.','lastDate']].map(([label,col])=>(
                         <th key={col} style={{...th,cursor:'pointer',userSelect:'none'}} onClick={()=>mColClick(col)}>
-                          {label}{mSort===col?<span style={{marginLeft:'4px',color:G}}>{mSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#3a2a10',fontSize:'9px'}}>⇅</span>}
+                          {label}{mSort===col?<span style={{marginLeft:'4px',color:G}}>{mSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#7a6035',fontSize:'9px'}}>⇅</span>}
                         </th>
                       ))}
                       <th style={th}></th>
@@ -748,9 +788,9 @@ export default function App(){
                             <td style={{...td,color:G,fontWeight:'bold'}} onClick={()=>setSelRaro(item.raro)}>{item.raro}</td>
                             <td style={td} onClick={()=>setSelRaro(item.raro)}><Badge cat={item.categoria}/></td>
                             <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'13px',color:item.count?G:'#3a2a10'}} onClick={()=>setSelRaro(item.raro)}>{item.count?`${item.avgPrice}c`:'—'}</td>
-                            <td style={{...td,color:'#aa8855'}} onClick={()=>setSelRaro(item.raro)}>{item.count?`${item.lastPrice}c`:'—'}</td>
-                            <td style={{...td,color:'#664400'}} onClick={()=>setSelRaro(item.raro)}>{item.count}</td>
-                            <td style={{...td,color:'#4a3010'}} onClick={()=>setSelRaro(item.raro)}>{item.lastDate?fmtDate(item.lastDate):'—'}</td>
+                            <td style={{...td,color:'#cdac72'}} onClick={()=>setSelRaro(item.raro)}>{item.count?`${item.lastPrice}c`:'—'}</td>
+                            <td style={{...td,color:'#b89545'}} onClick={()=>setSelRaro(item.raro)}>{item.count}</td>
+                            <td style={{...td,color:'#9a7d45'}} onClick={()=>setSelRaro(item.raro)}>{item.lastDate?fmtDate(item.lastDate):'—'}</td>
                             <td style={td}><button style={{...btnD,padding:'4px 10px',fontSize:'16px'}} onClick={e=>{e.stopPropagation();setQuickRaro(item.raro);}}>ℹ</button></td>
                           </tr>
                         );
@@ -776,10 +816,10 @@ export default function App(){
                   <div style={{...card,padding:'14px 18px',marginBottom:'16px',display:'flex',gap:'20px',flexWrap:'wrap',alignItems:'center'}}>
                     {selCatalog.imagem_url&&<Img url={selCatalog.imagem_url} alt={selRaro} size={90}/>}
                     <div style={{display:'flex',gap:'24px',flexWrap:'wrap',alignItems:'center'}}>
-                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#4a3010',letterSpacing:'1px'}}>CATÁLOGO</div>
-                      {selCatalog.preco_catalogo>=0&&<div><div style={{fontSize:'13px',color:'#664400',marginBottom:'2px'}}>PREÇO DE LANÇAMENTO</div><div style={{color:'#e599f7',fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{selCatalog.preco_catalogo}c</div></div>}
-                      {selCatalog.pixels>=0&&selCatalog.pixels!==null&&<div><div style={{fontSize:'13px',color:'#664400',marginBottom:'2px'}}>PIXELS</div><div style={{color:'#63e6be',fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{selCatalog.pixels}px</div></div>}
-                      {selCatalog.data_lancamento&&['Raro Exclusivo','Raro Rotativo','Raro Colecionável'].includes(selCatalog.categoria)&&<div><div style={{fontSize:'13px',color:'#664400',marginBottom:'2px'}}>LANÇAMENTO</div><div style={{color:G,fontSize:'18px'}}>{fmtDate(selCatalog.data_lancamento)}</div></div>}
+                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#9a7d45',letterSpacing:'1px'}}>CATÁLOGO</div>
+                      {selCatalog.preco_catalogo>=0&&<div><div style={{fontSize:'13px',color:'#b89545',marginBottom:'2px'}}>PREÇO DE LANÇAMENTO</div><div style={{color:'#e599f7',fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{selCatalog.preco_catalogo}c</div></div>}
+                      {selCatalog.pixels>=0&&selCatalog.pixels!==null&&<div><div style={{fontSize:'13px',color:'#b89545',marginBottom:'2px'}}>PIXELS</div><div style={{color:'#63e6be',fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{selCatalog.pixels}px</div></div>}
+                      {selCatalog.data_lancamento&&['Raro Exclusivo','Raro Rotativo','Raro Colecionável'].includes(selCatalog.categoria)&&<div><div style={{fontSize:'13px',color:'#b89545',marginBottom:'2px'}}>LANÇAMENTO</div><div style={{color:G,fontSize:'18px'}}>{fmtDate(selCatalog.data_lancamento)}</div></div>}
                     </div>
                   </div>
                 )}
@@ -787,7 +827,7 @@ export default function App(){
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'10px',marginBottom:'16px'}}>
                   {[{l:'MÉDIA 20 UNID.',v:`${selInfo?.avgPrice||0}c`,hi:true},{l:'ÚLTIMO PREÇO',v:`${selInfo?.lastPrice||0}c`},{l:'UNID. VENDIDAS',v:String(selInfo?.count||0)},{l:'ÚLTIMA NEG.',v:fmtDate(selInfo?.lastDate)}].map(s=>(
                     <div key={s.l} style={{...card,padding:'12px',textAlign:'center',border:s.hi?`2px solid ${G}`:'1px solid #2a1800',boxShadow:s.hi?`3px 3px 0 #443300`:'3px 3px 12px rgba(0,0,0,.6)'}}>
-                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'8px'}}>{s.l}</div>
+                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'8px'}}>{s.l}</div>
                       <div style={{color:s.hi?G:'#aa8855',fontSize:'20px'}}>{s.v}</div>
                     </div>
                   ))}
@@ -800,8 +840,8 @@ export default function App(){
                       <ResponsiveContainer width="100%" height={190}>
                         <LineChart data={chartData} margin={{top:5,right:20,left:10,bottom:5}}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#1a1000" vertical={false}/>
-                          <XAxis dataKey="date" tickFormatter={v=>fmtDate(v)} tick={{fill:'#4a3010',fontSize:12,fontFamily:"'VT323',monospace"}} axisLine={{stroke:'#2a1800'}} tickLine={false}/>
-                          <YAxis tick={{fill:'#4a3010',fontSize:12,fontFamily:"'VT323',monospace"}} axisLine={{stroke:'#2a1800'}} tickLine={false} width={55}/>
+                          <XAxis dataKey="date" tickFormatter={v=>fmtDate(v)} tick={{fill:'#9a7d45',fontSize:12,fontFamily:"'VT323',monospace"}} axisLine={{stroke:'#2a1800'}} tickLine={false}/>
+                          <YAxis tick={{fill:'#9a7d45',fontSize:12,fontFamily:"'VT323',monospace"}} axisLine={{stroke:'#2a1800'}} tickLine={false} width={55}/>
                           <Tooltip content={<ChartTip/>}/>
                           <Line type="monotone" dataKey="preco" stroke={G} strokeWidth={2.5} dot={{fill:G,r:4,strokeWidth:0}} activeDot={{r:6,fill:'#fff',stroke:G,strokeWidth:2}}/>
                         </LineChart>
@@ -825,11 +865,11 @@ export default function App(){
                           {!dailyAvg.length&&<tr><td colSpan={3} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
                           {dailyAvg.map((row,i)=>(
                             <tr key={row.date} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                              <td style={{...td,color:'#7a5a30'}}>{fmtDate(row.date)}</td>
-                              <td style={{...td,color:'#664400'}}>{row.units} un.</td>
+                              <td style={{...td,color:'#bd9a5a'}}>{fmtDate(row.date)}</td>
+                              <td style={{...td,color:'#b89545'}}>{row.units} un.</td>
                               <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{row.avg}c</td>
                               <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:row.change===null?'#3a2a10':row.change>0?'#69db7c':row.change<0?'#f66':'#aa8855'}}>
-                                {row.change===null?'—':`${row.change>0?'▲ +':row.change<0?'▼ ':''}${row.change}c`}{row.changePct!==null&&row.change!==0?<span style={{fontSize:'10px',color:'#886633'}}> ({row.changePct>0?'+':''}{row.changePct}%)</span>:''}
+                                {row.change===null?'—':`${row.change>0?'▲ +':row.change<0?'▼ ':''}${row.change}c`}{row.changePct!==null&&row.change!==0?<span style={{fontSize:'10px',color:'#c9a85f'}}> ({row.changePct>0?'+':''}{row.changePct}%)</span>:''}
                               </td>
                             </tr>
                           ))}
@@ -842,13 +882,13 @@ export default function App(){
                           {!selTrades.length&&<tr><td colSpan={7} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
                           {selTrades.map((t,i)=>(
                             <tr key={t.id} className="rrow" style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                              <td style={{...td,color:'#6a4a20'}}>{fmtDate(t.data)}</td>
-                              <td style={{...td,color:'#7a5a30'}}>{t.quantidade}</td>
-                              <td style={{...td,color:'#aa8855'}}>{t.precoVenda}c</td>
+                              <td style={{...td,color:'#b08f4f'}}>{fmtDate(t.data)}</td>
+                              <td style={{...td,color:'#bd9a5a'}}>{t.quantidade}</td>
+                              <td style={{...td,color:'#cdac72'}}>{t.precoVenda}c</td>
                               <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.precoPorUnidade}c</td>
                               <td style={{...td,color:'#7bb8ff'}}>{t.vendedor}</td>
                               <td style={{...td,color:'#7dffaa'}}>{t.comprador}</td>
-                              <td style={{...td,color:'#4a3010',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
+                              <td style={{...td,color:'#9a7d45',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -867,9 +907,9 @@ export default function App(){
         <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 90px)',overflow:'hidden'}}>
           <div style={{background:'linear-gradient(135deg,#1a1000,#0f0800)',borderBottom:'2px solid #2a1800',borderLeft:`4px solid ${G}`,padding:'10px 20px',display:'flex',alignItems:'center',gap:'14px',flexShrink:0}}>
             <span style={{fontSize:'20px'}}>📊</span>
-            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>MEU PAINEL</div><div style={{color:'#886633',fontSize:'15px'}}>Registre compras e vendas e saiba seu patrimônio em raros. Acompanhe lucro/prejuízo, capital parado e taxa de acerto — um gerenciador de carteira completo!</div></div>
+            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>MEU PAINEL</div><div style={{color:'#c9a85f',fontSize:'15px'}}>Registre compras e vendas e saiba seu patrimônio em raros. Acompanhe lucro/prejuízo, capital parado e taxa de acerto — um gerenciador de carteira completo!</div></div>
           </div>
-          <div style={{overflow:'auto',flex:1,padding:'18px',paddingBottom:'80px',background:'#090600'}}>
+          <div style={{overflow:'auto',flex:1,padding:'18px',paddingBottom:'100px',background:'#090600'}}>
           <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(200px,1fr))',gap:'10px',marginBottom:'16px'}}>
             {[
               {l:'ESTOQUE PARADO',v:`${totals.parado}c`,sub:'custo médio × estoque',color:G},
@@ -878,9 +918,9 @@ export default function App(){
               {l:'MARGEM DE LUCRO',v:totals.margemGeral!==null?`${totals.margemGeral>=0?'+':''}${totals.margemGeral}%`:'—',sub:'ganho total sobre o investido',color:totals.margemGeral>=0?'#e599f7':'#ff8855'},
             ].map(s=>(
               <div key={s.l} style={{...card,padding:'14px 18px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
-                <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'8px',letterSpacing:'1px'}}>{s.l}</div>
+                <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'8px',letterSpacing:'1px'}}>{s.l}</div>
                 <div style={{color:s.color,fontSize:'26px',marginBottom:'4px',fontWeight:'bold'}}>{s.v}</div>
-                <div style={{color:'#4a3010',fontSize:'15px'}}>{s.sub}</div>
+                <div style={{color:'#9a7d45',fontSize:'15px'}}>{s.sub}</div>
               </div>
             ))}
           </div>
@@ -891,7 +931,7 @@ export default function App(){
               <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
                 <input className="inp" style={{...inp,width:'130px',padding:'4px 10px',fontSize:'16px'}} placeholder="buscar..." value={pSearch} onChange={e=>setPSearch(e.target.value)}/>
                 {(pSort!=='raro'||pSortDir!=='asc'||pSearch)&&(
-                  <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#aa8855',borderColor:'#664400'}} onClick={()=>{setPSort('raro');setPSortDir('asc');setPSearch('');}}>✕ limpar</button>
+                  <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#cdac72',borderColor:'#664400'}} onClick={()=>{setPSort('raro');setPSortDir('asc');setPSearch('');}}>✕ limpar</button>
                 )}
               </div>
             </div>
@@ -901,7 +941,7 @@ export default function App(){
                   {[['',''],['RARO','raro'],['COMPRADOS','comprados'],['VENDIDOS','vendidos'],['ESTOQUE','estoque'],['CUSTO MÉD','custo'],['INVESTIDO','investido'],['VALOR MERC.','mktPrice'],['VALOR MERC. TOTAL','mktValue'],['VENDIDO','vendido'],['LUCRO','lucro'],['','']].map(([label,col])=>(
                     <th key={label||col} style={{...th,...(col?{cursor:'pointer',userSelect:'none'}:{})}}
                       onClick={()=>{if(!col)return;if(pSort===col)setPSortDir(d=>d==='asc'?'desc':'asc');else{setPSort(col);setPSortDir('desc');}}}>
-                      {label}{col&&pSort===col?<span style={{marginLeft:'4px',color:G}}>{pSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#3a2a10',fontSize:'9px'}}>{col?'⇅':''}</span>}
+                      {label}{col&&pSort===col?<span style={{marginLeft:'4px',color:G}}>{pSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#7a6035',fontSize:'9px'}}>{col?'⇅':''}</span>}
                     </th>
                   ))}
                 </tr></thead>
@@ -916,7 +956,7 @@ export default function App(){
                       <td style={{...td,color:'#7bb8ff'}}>{item.comprados}</td>
                       <td style={{...td,color:'#7dffaa'}}>{item.vendidos}</td>
                       <td style={{...td,color:item.estoque>0?G:'#4a3010'}}>{item.estoque}</td>
-                      <td style={{...td,color:'#aa8855'}}>{item.custo}c</td>
+                      <td style={{...td,color:'#cdac72'}}>{item.custo}c</td>
                       <td style={{...td,color:'#7bb8ff'}}>{item.investido}c</td>
                       <td style={{...td,color:item.mktPrice>0?'#ffa94d':'#3a2a10',fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{item.mktPrice>0?`${item.mktPrice}c`:'—'}</td>
                       <td style={{...td,color:item.mktValue>0?'#ffa94d':'#3a2a10',fontWeight:item.mktValue>0?'bold':'normal'}}>{item.mktValue>0?`${item.mktValue}c`:'—'}</td>
@@ -944,15 +984,15 @@ export default function App(){
         <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 90px)',overflow:'hidden'}}>
           <div style={{background:'linear-gradient(135deg,#1a1000,#0f0800)',borderBottom:'2px solid #2a1800',borderLeft:`4px solid ${G}`,padding:'10px 20px',display:'flex',alignItems:'center',gap:'14px',flexShrink:0}}>
             <span style={{fontSize:'20px'}}>🤝</span>
-            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>NEGOCIAÇÕES</div><div style={{color:'#886633',fontSize:'15px'}}>Veja quem compra ou vende raros agora. Publique ordens com múltiplos itens — ativas por 72h e removidas automaticamente. Conecte-se com os traders do Turva!</div></div>
+            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>NEGOCIAÇÕES</div><div style={{color:'#c9a85f',fontSize:'15px'}}>Veja quem compra ou vende raros agora. Publique ordens com múltiplos itens — ativas por 72h e removidas automaticamente. Conecte-se com os traders do Turva!</div></div>
           </div>
           <div style={{overflow:'auto',flex:1,padding:'18px',background:'#090600'}}>
           <div style={{display:'flex',gap:'8px',marginBottom:'16px',alignItems:'center'}}>
-            <span style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#4a3010',marginRight:'4px'}}>FILTRO:</span>
+            <span style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#9a7d45',marginRight:'4px'}}>FILTRO:</span>
             {[['todos','TODOS'],['compra','COMPRO'],['venda','VENDO']].map(([v,l])=>(
               <button key={v} style={{...btnG,fontSize:'17px',padding:'6px 14px',...(orderFilter===v?{background:BG3,border:`1px solid ${G}`,color:G}:{})}} onClick={()=>setOrderFilter(v)}>{l}</button>
             ))}
-            <span style={{color:'#3a2a10',fontSize:'16px',marginLeft:'8px'}}>{filteredOrders.length} ordens ativas</span>
+            <span style={{color:'#7a6035',fontSize:'16px',marginLeft:'8px'}}>{filteredOrders.length} ordens ativas</span>
           </div>
           {!filteredOrders.length&&<div style={{...card,padding:'48px',textAlign:'center',color:'#2a1800',fontSize:'18px'}}>Nenhuma ordem ativa. Clique em <span style={{color:G}}>+ NOVA ORDEM</span>!</div>}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'14px'}}>
@@ -966,7 +1006,7 @@ export default function App(){
                       <span style={{background:isBuy?'#69db7c22':'#f6622',border:`1px solid ${isBuy?'#69db7c44':'#f6644'}`,color:isBuy?'#69db7c':'#f66',padding:'3px 10px',fontFamily:"'Press Start 2P',monospace",fontSize:'10px'}}>
                         {isBuy?'🛒 COMPRO':'💰 VENDO'}
                       </span>
-                      <div style={{color:'#664400',fontSize:'15px',marginTop:'6px'}}>por <span style={{color:G}}>{order.username}</span></div>
+                      <div style={{color:'#b89545',fontSize:'15px',marginTop:'6px'}}>por <span style={{color:G}}>{order.username}</span></div>
                     </div>
                     <div style={{textAlign:'right'}}>
                       <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:new Date(order.expires_at)<new Date()?'#f44':'#69db7c'}}>{timeLeft(order.expires_at)}</div>
@@ -984,14 +1024,14 @@ export default function App(){
                           <Img url={img} alt={it.raro} size={30}/>
                           <div style={{flex:1}}>
                             <div style={{color:'#c8a870',fontSize:'17px'}}>{it.raro}</div>
-                            <div style={{color:'#4a3010',fontSize:'15px'}}>Qtd: {it.quantidade}</div>
+                            <div style={{color:'#9a7d45',fontSize:'15px'}}>Qtd: {it.quantidade}</div>
                           </div>
                           <div style={{fontFamily:"'Press Start 2P'",fontSize:'12px',color:G,flexShrink:0}}>{it.preco}c</div>
                         </div>
                       );
                     })}
                   </div>
-                  {order.observacao&&<div style={{marginTop:'10px',color:'#664400',fontSize:'16px',fontStyle:'italic'}}>"{order.observacao}"</div>}
+                  {order.observacao&&<div style={{marginTop:'10px',color:'#b89545',fontSize:'16px',fontStyle:'italic'}}>"{order.observacao}"</div>}
                 </div>
               );
             })}
@@ -1004,7 +1044,7 @@ export default function App(){
       {tab==='mod'&&user?.is_admin&&(
         <div style={{overflow:'auto',height:'calc(100vh - 90px)',padding:'18px',background:'#090600'}}>
           {pendingTrades.length===0
-            ?<div style={{...card,padding:'20px',textAlign:'center',color:'#3a2a10',fontSize:'17px',marginBottom:'18px'}}>Nenhuma pendente ✅</div>
+            ?<div style={{...card,padding:'20px',textAlign:'center',color:'#7a6035',fontSize:'17px',marginBottom:'18px'}}>Nenhuma pendente ✅</div>
             :<div style={{...card,padding:0,marginBottom:'18px'}}>
               <div style={{...secHdr,color:'#f66'}}>◆ AGUARDANDO APROVAÇÃO — {pendingTrades.length}</div>
               <div style={{overflowX:'auto'}}>
@@ -1012,14 +1052,14 @@ export default function App(){
                   <thead><tr>{['DATA','RARO','QTD','TOTAL','PREÇO/UN','VENDEDOR','COMPRADOR','ENVIADO','AÇÕES'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
                   <tbody>{modPItems.map((t,i)=>(
                     <tr key={t.id} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                      <td style={{...td,color:'#6a4a20'}}>{fmtDate(t.data)}</td>
+                      <td style={{...td,color:'#b08f4f'}}>{fmtDate(t.data)}</td>
                       <td style={{...td,color:G,fontWeight:'bold'}}>{t.raro}</td>
-                      <td style={{...td,color:'#7a5a30'}}>{t.quantidade}</td>
-                      <td style={{...td,color:'#aa8855'}}>{t.preco_venda}c</td>
+                      <td style={{...td,color:'#bd9a5a'}}>{t.quantidade}</td>
+                      <td style={{...td,color:'#cdac72'}}>{t.preco_venda}c</td>
                       <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.preco_por_unidade}c</td>
                       <td style={{...td,color:'#7bb8ff'}}>{t.vendedor}</td>
                       <td style={{...td,color:'#7dffaa'}}>{t.comprador}</td>
-                      <td style={{...td,color:'#4a3010',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
+                      <td style={{...td,color:'#9a7d45',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
                       <td style={{...td,whiteSpace:'nowrap'}}>
                         <div style={{display:'flex',gap:'5px'}}>
                           <button style={btnGreen} onMouseEnter={e=>{e.currentTarget.style.background='#4f4';e.currentTarget.style.color='#000';}} onMouseLeave={e=>{e.currentTarget.style.background='#002200';e.currentTarget.style.color='#4f4';}} onClick={()=>approveTrade(t.id)}>✓</button>
@@ -1043,14 +1083,14 @@ export default function App(){
                 <thead><tr>{['DATA','RARO','QTD','TOTAL','PREÇO/UN','VENDEDOR','COMPRADOR','LANÇADO','AÇÕES'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
                 <tbody>{modAItems.map((t,i)=>(
                   <tr key={t.id} className="rrow" style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                    <td style={{...td,color:'#6a4a20'}}>{fmtDate(t.data)}</td>
+                    <td style={{...td,color:'#b08f4f'}}>{fmtDate(t.data)}</td>
                     <td style={{...td,color:G,fontWeight:'bold'}}>{t.raro}</td>
-                    <td style={{...td,color:'#7a5a30'}}>{t.quantidade}</td>
-                    <td style={{...td,color:'#aa8855'}}>{t.precoVenda}c</td>
+                    <td style={{...td,color:'#bd9a5a'}}>{t.quantidade}</td>
+                    <td style={{...td,color:'#cdac72'}}>{t.precoVenda}c</td>
                     <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.precoPorUnidade}c</td>
                     <td style={{...td,color:'#7bb8ff'}}>{t.vendedor}</td>
                     <td style={{...td,color:'#7dffaa'}}>{t.comprador}</td>
-                    <td style={{...td,color:'#4a3010',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
+                    <td style={{...td,color:'#9a7d45',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
                     <td style={{...td,whiteSpace:'nowrap'}}>
                       <div style={{display:'flex',gap:'5px'}}>
                         <button style={{...btnD,padding:'4px 10px',fontSize:'17px'}} onMouseEnter={e=>{e.currentTarget.style.background=G;e.currentTarget.style.color='#000';}} onMouseLeave={e=>{e.currentTarget.style.background=BG3;e.currentTarget.style.color=G;}} onClick={()=>openEditTrade(t)}>✎</button>
@@ -1076,7 +1116,7 @@ export default function App(){
                 <tbody>
                   {modCItems.map((m,i)=>(
                     <tr key={m.id} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                      <td style={{...td,color:'#7a5a30',whiteSpace:'nowrap'}}>{fmtDate(m.created_at?.split('T')[0])} <span style={{color:'#4a3010'}}>{fmtTime(m.created_at)}</span></td>
+                      <td style={{...td,color:'#bd9a5a',whiteSpace:'nowrap'}}>{fmtDate(m.created_at?.split('T')[0])} <span style={{color:'#9a7d45'}}>{fmtTime(m.created_at)}</span></td>
                       <td style={{...td,color:G,whiteSpace:'nowrap'}}>{m.username}</td>
                       <td style={{...td,color:'#c8a870',maxWidth:'400px',whiteSpace:'normal',wordBreak:'break-word'}}>{m.message}</td>
                       <td style={td}>
@@ -1095,17 +1135,17 @@ export default function App(){
           <div style={{...card,padding:0,marginTop:'18px'}}>
             <div style={{...secHdr,color:'#ff8855'}}>🔑 REDEFINIR SENHA DE USUÁRIO</div>
             <div style={{padding:'14px 16px'}}>
-              <div style={{color:'#886633',fontSize:'15px',marginBottom:'12px'}}>Use esta ferramenta quando um jogador esquecer a senha. Você define uma senha nova, repassa para ele, e ele pode trocar depois.</div>
+              <div style={{color:'#c9a85f',fontSize:'15px',marginBottom:'12px'}}>Use esta ferramenta quando um jogador esquecer a senha. Você define uma senha nova, repassa para ele, e ele pode trocar depois.</div>
               <div style={{display:'flex',gap:'8px',alignItems:'flex-end',flexWrap:'wrap'}}>
                 <div style={{flex:'1 1 180px'}}>
-                  <label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>USUÁRIO</label>
+                  <label style={{display:'block',color:'#c9a85f',fontSize:'14px',marginBottom:'5px'}}>USUÁRIO</label>
                   <select style={{...sel,padding:'8px 10px',fontSize:'17px'}} value={pwResetUser} onChange={e=>setPwResetUser(e.target.value)}>
                     <option value="">— selecionar —</option>
                     {allUsersFull.map(u=><option key={u.id} value={u.username}>{u.username}{u.is_admin?' (admin)':''}</option>)}
                   </select>
                 </div>
                 <div style={{flex:'1 1 180px'}}>
-                  <label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>NOVA SENHA</label>
+                  <label style={{display:'block',color:'#c9a85f',fontSize:'14px',marginBottom:'5px'}}>NOVA SENHA</label>
                   <input className="inp" style={{...inp,padding:'8px 10px'}} type="text" placeholder="mín. 4 caracteres" value={pwResetVal} onChange={e=>setPwResetVal(e.target.value)}/>
                 </div>
                 <button style={{...btnY,padding:'9px 18px',fontSize:'17px',opacity:loading?0.6:1}} onClick={doResetPassword} disabled={loading}>{loading?'...':'✓ REDEFINIR'}</button>
@@ -1134,7 +1174,7 @@ export default function App(){
                     {l:'PARADO',v:`${viewUserData.totals.parado}c`,color:G},
                   ].map(s=>(
                     <div key={s.l} style={{...card,padding:'10px',textAlign:'center',border:`1px solid ${s.color}33`}}>
-                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'6px'}}>{s.l}</div>
+                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'6px'}}>{s.l}</div>
                       <div style={{color:s.color,fontSize:'20px',fontWeight:'bold'}}>{s.v}</div>
                     </div>
                   ))}
@@ -1150,7 +1190,7 @@ export default function App(){
                           <td style={{...td,color:'#7bb8ff'}}>{item.comprados}</td>
                           <td style={{...td,color:'#7dffaa'}}>{item.vendidos}</td>
                           <td style={{...td,color:item.estoque>0?G:'#4a3010'}}>{item.estoque}</td>
-                          <td style={{...td,color:'#aa8855'}}>{item.custo}c</td>
+                          <td style={{...td,color:'#cdac72'}}>{item.custo}c</td>
                           <td style={{...td,color:'#7bb8ff'}}>{item.investido}c</td>
                           <td style={{...td,color:'#7dffaa'}}>{item.vendido}c</td>
                           <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:item.lucro>=0?'#69db7c':'#f66'}}>{item.lucro>=0?'+':''}{item.lucro}c</td>
@@ -1161,7 +1201,72 @@ export default function App(){
                 </div>
               </div>
             )}
-            {viewUser&&!viewUserData&&<div style={{padding:'20px',textAlign:'center',color:'#4a3010',fontSize:'16px'}}>Clique em "Ver painel" para carregar os dados.</div>}
+            {viewUser&&!viewUserData&&<div style={{padding:'20px',textAlign:'center',color:'#9a7d45',fontSize:'16px'}}>Clique em "Ver painel" para carregar os dados.</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ══ INSIGHTS ══ */}
+      {tab==='insights'&&user?.is_admin&&(
+        <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 90px)',overflow:'hidden'}}>
+          <div style={{background:'linear-gradient(135deg,#1a1000,#0f0800)',borderBottom:'2px solid #2a1800',borderLeft:`4px solid ${G}`,padding:'10px 20px',display:'flex',alignItems:'center',gap:'14px',flexShrink:0}}>
+            <span style={{fontSize:'20px'}}>📈</span>
+            <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>INSIGHTS DO SITE</div><div style={{color:'#c9a85f',fontSize:'15px'}}>Estatísticas de acesso e atividade dos usuários do Turva Trader.</div></div>
+          </div>
+          <div style={{overflow:'auto',flex:1,padding:'18px',paddingBottom:'100px',background:'#090600'}}>
+            {/* Cards de resumo */}
+            <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(180px,1fr))',gap:'10px',marginBottom:'16px'}}>
+              {[
+                {l:'LOGINS HOJE',v:String(insights.hoje),sub:`${insights.usersToday} usuário(s) único(s)`,color:'#69db7c'},
+                {l:'LOGINS NA SEMANA',v:String(insights.semana),sub:`${insights.usersWeek} usuário(s) único(s)`,color:'#7bb8ff'},
+                {l:'LOGINS NO MÊS',v:String(insights.mes),sub:'últimos 30 dias',color:'#e599f7'},
+                {l:'TOTAL DE ACESSOS',v:String(insights.totalLogins),sub:'desde o início',color:G},
+                {l:'HORÁRIO DE PICO',v:`${String(insights.horaPico).padStart(2,'0')}h`,sub:'mais movimentado',color:'#ffa94d'},
+              ].map(s=>(
+                <div key={s.l} style={{...card,padding:'14px 16px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
+                  <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'8px',letterSpacing:'1px'}}>{s.l}</div>
+                  <div style={{color:s.color,fontSize:'26px',marginBottom:'4px',fontWeight:'bold'}}>{s.v}</div>
+                  <div style={{color:'#9a7d45',fontSize:'14px'}}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Gráfico de acessos por dia (14 dias) */}
+            <div style={{...card,marginBottom:'16px',padding:0}}>
+              <div style={secHdr}>◆ ACESSOS POR DIA — ÚLTIMOS 14 DIAS</div>
+              <div style={{padding:'16px 10px 10px 0',background:'#080500'}}>
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={insights.dias14} margin={{top:5,right:20,left:10,bottom:5}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1000" vertical={false}/>
+                    <XAxis dataKey="date" tickFormatter={v=>fmtDate(v).slice(0,5)} tick={{fill:'#9a7d45',fontSize:12,fontFamily:"'VT323',monospace"}} axisLine={{stroke:'#2a1800'}} tickLine={false}/>
+                    <YAxis allowDecimals={false} tick={{fill:'#9a7d45',fontSize:12,fontFamily:"'VT323',monospace"}} axisLine={{stroke:'#2a1800'}} tickLine={false} width={35}/>
+                    <Tooltip contentStyle={{background:'#1a1208',border:`2px solid ${G}`,fontFamily:"'VT323',monospace"}} labelFormatter={v=>fmtDate(v)} formatter={v=>[`${v} acesso(s)`,'']}/>
+                    <Line type="monotone" dataKey="count" stroke={G} strokeWidth={2.5} dot={{fill:G,r:3,strokeWidth:0}} activeDot={{r:6,fill:'#fff',stroke:G,strokeWidth:2}}/>
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Ranking de usuários */}
+            <div style={{...card,padding:0}}>
+              <div style={secHdr}>◆ RANKING DE USUÁRIOS MAIS ATIVOS</div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
+                  <thead><tr>{['#','USUÁRIO','TOTAL DE ACESSOS','ÚLTIMO ACESSO'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {!insights.ranking.length&&<tr><td colSpan={4} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Nenhum acesso registrado ainda.</td></tr>}
+                    {insights.ranking.map((u,i)=>(
+                      <tr key={u.username} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
+                        <td style={{...td,color:i<3?G:'#4a3010',fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{i+1}º</td>
+                        <td style={{...td,color:G,fontWeight:'bold'}}>{u.username}</td>
+                        <td style={{...td,color:'#7dffaa',fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{u.total}</td>
+                        <td style={{...td,color:'#cdac72'}}>{fmtDate(u.ultimo.split('T')[0])} <span style={{color:'#9a7d45'}}>{fmtTime(u.ultimo)}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1181,12 +1286,12 @@ export default function App(){
           <div style={{background:'#0a0600',border:`2px solid ${G}`,borderTop:'none',display:'flex',flexDirection:'column'}} className="chat-anim">
             {/* Messages */}
             <div ref={chatRef} style={{height:'240px',overflow:'auto',padding:'10px',display:'flex',flexDirection:'column',gap:'6px'}}>
-              {!messages.length&&<div style={{color:'#3a2a10',fontSize:'16px',textAlign:'center',marginTop:'80px'}}>Nenhuma mensagem ainda.</div>}
+              {!messages.length&&<div style={{color:'#7a6035',fontSize:'16px',textAlign:'center',marginTop:'80px'}}>Nenhuma mensagem ainda.</div>}
               {messages.map(m=>{
                 const isMe=m.username===user?.username;
                 return(
                   <div key={m.id} style={{display:'flex',flexDirection:'column',alignItems:isMe?'flex-end':'flex-start'}}>
-                    <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:isMe?G2:'#664400',marginBottom:'2px'}}>{m.username} <span style={{color:'#3a2a10',fontFamily:"'VT323',monospace",fontSize:'13px'}}>{fmtTime(m.created_at)}</span></div>
+                    <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:isMe?G2:'#664400',marginBottom:'2px'}}>{m.username} <span style={{color:'#7a6035',fontFamily:"'VT323',monospace",fontSize:'13px'}}>{fmtTime(m.created_at)}</span></div>
                     <div style={{background:isMe?'#1a1000':'#130f0a',border:`1px solid ${isMe?G2:'#2a1800'}`,padding:'6px 10px',fontSize:'16px',color:isMe?'#e8c870':'#c8a870',maxWidth:'85%',wordBreak:'break-word'}}>
                       {m.message}
                     </div>
@@ -1222,18 +1327,18 @@ export default function App(){
                 {l:'CATEGORIA',v:quickCatalog.categoria||'—',c:'#aaa'},
               ].map(s=>(
                 <div key={s.l} style={{...card,padding:'12px',textAlign:'center'}}>
-                  <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'8px'}}>{s.l}</div>
+                  <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'8px'}}>{s.l}</div>
                   <div style={{color:s.c,fontSize:'18px'}}>{s.v}</div>
                 </div>
               ))}
             </div>
             {quickInfo?.count>0&&(
               <div style={{borderTop:`1px solid #1a1000`,paddingTop:'14px'}}>
-                <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#4a3010',marginBottom:'10px',letterSpacing:'1px'}}>DADOS DE MERCADO</div>
+                <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#9a7d45',marginBottom:'10px',letterSpacing:'1px'}}>DADOS DE MERCADO</div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'10px'}}>
                   {[{l:'MÉDIA 20 UNID.',v:`${quickInfo.avgPrice}c`,c:G},{l:'ÚLTIMO',v:`${quickInfo.lastPrice}c`,c:'#aa8855'},{l:'UNID. VENDIDAS',v:String(quickInfo.count),c:'#664400'}].map(s=>(
                     <div key={s.l} style={{...card,padding:'10px',textAlign:'center'}}>
-                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#4a3010',marginBottom:'6px'}}>{s.l}</div>
+                      <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'6px'}}>{s.l}</div>
                       <div style={{color:s.c,fontSize:'17px'}}>{s.v}</div>
                     </div>
                   ))}
@@ -1244,7 +1349,7 @@ export default function App(){
           </div>
         )}
         {quickRaro&&!quickCatalog&&(
-          <div style={{textAlign:'center',padding:'32px',color:'#4a3010',fontSize:'17px'}}>Este raro não tem dados no catálogo ainda.</div>
+          <div style={{textAlign:'center',padding:'32px',color:'#9a7d45',fontSize:'17px'}}>Este raro não tem dados no catálogo ainda.</div>
         )}
       </Modal>
 
@@ -1286,8 +1391,8 @@ export default function App(){
           const qtd=Math.max(1,parseInt(tF.quantidade)||1);
           const pv=tF.priceMode==='total'?parseFloat(tF.precoVenda||0):parseFloat(tF.precoPorUnidade||0)*qtd;
           const ppu=tF.priceMode==='unit'?parseFloat(tF.precoPorUnidade||0):Math.round(pv/qtd);
-          return<div style={{background:'#080500',border:`1px solid #2a1800`,padding:'8px 14px',marginBottom:'13px',fontSize:'16px',color:'#886633',display:'flex',justifyContent:'space-between',gap:'16px'}}>
-            <span>Total: <span style={{color:'#aa8855'}}>{Math.round(pv)}c</span></span>
+          return<div style={{background:'#080500',border:`1px solid #2a1800`,padding:'8px 14px',marginBottom:'13px',fontSize:'16px',color:'#c9a85f',display:'flex',justifyContent:'space-between',gap:'16px'}}>
+            <span>Total: <span style={{color:'#cdac72'}}>{Math.round(pv)}c</span></span>
             <span>Por unidade: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{ppu}c</span></span>
           </div>;
         })()}
@@ -1329,7 +1434,7 @@ export default function App(){
           <div>
             <label style={lbl}>
               <span style={{cursor:'pointer',color:oF.priceMode==='total'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'total'})}>TOTAL</span>
-              <span style={{color:'#3a2a10',margin:'0 6px'}}>|</span>
+              <span style={{color:'#7a6035',margin:'0 6px'}}>|</span>
               <span style={{cursor:'pointer',color:oF.priceMode==='unit'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'unit'})}>POR UNIDADE</span>
             </label>
             {oF.priceMode==='total'
@@ -1343,8 +1448,8 @@ export default function App(){
           const qtd=Math.max(1,parseInt(oF.quantidade)||1);
           const pt=oF.priceMode==='total'?parseFloat(oF.precoTotal||0):parseFloat(oF.precoPorUnidade||0)*qtd;
           const ppu=oF.priceMode==='unit'?parseFloat(oF.precoPorUnidade||0):Math.round(pt/qtd);
-          return<div style={{background:'#080500',border:`1px solid #1a1000`,padding:'8px 12px',marginBottom:'13px',fontSize:'16px',color:'#886633',display:'flex',justifyContent:'space-between'}}>
-            <span>Total: <span style={{color:'#aa8855'}}>{pt===0?'0 (presente!)':Math.round(pt)}c</span></span>
+          return<div style={{background:'#080500',border:`1px solid #1a1000`,padding:'8px 12px',marginBottom:'13px',fontSize:'16px',color:'#c9a85f',display:'flex',justifyContent:'space-between'}}>
+            <span>Total: <span style={{color:'#cdac72'}}>{pt===0?'0 (presente!)':Math.round(pt)}c</span></span>
             <span>Por un: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{ppu}c</span></span>
           </div>;
         })()}
@@ -1371,7 +1476,7 @@ export default function App(){
             ))}
           </div>
         </div>
-        <div style={{fontFamily:"'Press Start 2P'",fontSize:'9px',color:'#4a3010',marginBottom:'10px',letterSpacing:'1px'}}>RAROS</div>
+        <div style={{fontFamily:"'Press Start 2P'",fontSize:'9px',color:'#9a7d45',marginBottom:'10px',letterSpacing:'1px'}}>RAROS</div>
         {orderForm.items.map((it,i)=>(
           <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 80px 100px 32px',gap:'8px',marginBottom:'8px',alignItems:'flex-end'}}>
             <div>{i===0&&<label style={{...lbl,marginBottom:'4px'}}>RARO</label>}<input className="inp" style={inp} placeholder="nome do raro" value={it.raro} onChange={e=>updOItem(i,'raro',e.target.value)} list="rl-ord"/></div>
@@ -1383,7 +1488,7 @@ export default function App(){
         <datalist id="rl-ord">{uRaros.map(r=><option key={r.raro} value={r.raro}/>)}</datalist>
         <button style={{...btnG,width:'100%',textAlign:'center',marginBottom:'14px',fontSize:'17px'}} onClick={addOItem}>+ Adicionar raro</button>
         <div style={{marginBottom:'20px'}}><label style={lbl}>OBSERVAÇÃO (opcional)</label><input className="inp" style={inp} placeholder="ex: aceito trocas" value={orderForm.observacao} onChange={e=>setOrderForm({...orderForm,observacao:e.target.value})}/></div>
-        <div style={{background:'#080500',border:`1px solid #1a1000`,padding:'8px 12px',marginBottom:'18px',fontSize:'16px',color:'#4a3010'}}>
+        <div style={{background:'#080500',border:`1px solid #1a1000`,padding:'8px 12px',marginBottom:'18px',fontSize:'16px',color:'#9a7d45'}}>
           ⏱ Ativa por <span style={{color:G}}>72 horas</span> e desaparece automaticamente.
         </div>
         <div style={{display:'flex',gap:'10px'}}>
@@ -1438,10 +1543,10 @@ export default function App(){
       <Modal show={showAccount} onClose={()=>setShowAccount(false)} title="⚙ MINHA CONTA" width="420px">
         <Flash msg={msg}/>
         <div style={{color:G,fontSize:'20px',marginBottom:'6px'}}>{user?.username}</div>
-        <div style={{color:'#886633',fontSize:'15px',marginBottom:'18px',borderBottom:'1px solid #1a1000',paddingBottom:'14px'}}>Altere sua senha abaixo. Você precisa informar a senha atual para confirmar que é você.</div>
-        <div style={{marginBottom:'13px'}}><label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>SENHA ATUAL *</label><input className="inp" style={inp} type="password" placeholder="sua senha de agora" value={accForm.atual} onChange={e=>setAccForm({...accForm,atual:e.target.value})}/></div>
-        <div style={{marginBottom:'13px'}}><label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>NOVA SENHA *</label><input className="inp" style={inp} type="password" placeholder="mín. 4 caracteres" value={accForm.nova} onChange={e=>setAccForm({...accForm,nova:e.target.value})}/></div>
-        <div style={{marginBottom:'20px'}}><label style={{display:'block',color:'#886633',fontSize:'14px',marginBottom:'5px'}}>CONFIRMAR NOVA SENHA *</label><input className="inp" style={inp} type="password" placeholder="repita a nova senha" value={accForm.confirma} onChange={e=>setAccForm({...accForm,confirma:e.target.value})} onKeyDown={e=>e.key==='Enter'&&doChangePassword()}/></div>
+        <div style={{color:'#c9a85f',fontSize:'15px',marginBottom:'18px',borderBottom:'1px solid #1a1000',paddingBottom:'14px'}}>Altere sua senha abaixo. Você precisa informar a senha atual para confirmar que é você.</div>
+        <div style={{marginBottom:'13px'}}><label style={{display:'block',color:'#c9a85f',fontSize:'14px',marginBottom:'5px'}}>SENHA ATUAL *</label><input className="inp" style={inp} type="password" placeholder="sua senha de agora" value={accForm.atual} onChange={e=>setAccForm({...accForm,atual:e.target.value})}/></div>
+        <div style={{marginBottom:'13px'}}><label style={{display:'block',color:'#c9a85f',fontSize:'14px',marginBottom:'5px'}}>NOVA SENHA *</label><input className="inp" style={inp} type="password" placeholder="mín. 4 caracteres" value={accForm.nova} onChange={e=>setAccForm({...accForm,nova:e.target.value})}/></div>
+        <div style={{marginBottom:'20px'}}><label style={{display:'block',color:'#c9a85f',fontSize:'14px',marginBottom:'5px'}}>CONFIRMAR NOVA SENHA *</label><input className="inp" style={inp} type="password" placeholder="repita a nova senha" value={accForm.confirma} onChange={e=>setAccForm({...accForm,confirma:e.target.value})} onKeyDown={e=>e.key==='Enter'&&doChangePassword()}/></div>
         <div style={{display:'flex',gap:'10px'}}>
           <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doChangePassword} disabled={loading}>{loading?'SALVANDO...':'✓ ALTERAR SENHA'}</button>
           <button style={btnG} onClick={()=>setShowAccount(false)}>CANCELAR</button>
@@ -1464,7 +1569,7 @@ export default function App(){
               </div>
               <div style={{color:'#c8a870',fontSize:'16px',marginBottom:'10px',lineHeight:1.5}}>{s.desc}</div>
               <ul style={{paddingLeft:'16px',margin:0}}>
-                {s.dicas.map((d,i)=><li key={i} style={{color:'#886633',fontSize:'15px',marginBottom:'4px',lineHeight:1.4}}>{d}</li>)}
+                {s.dicas.map((d,i)=><li key={i} style={{color:'#c9a85f',fontSize:'15px',marginBottom:'4px',lineHeight:1.4}}>{d}</li>)}
               </ul>
             </div>
           ))}
@@ -1473,9 +1578,9 @@ export default function App(){
       </Modal>
 
       {/* Footer */}
-      <footer style={{position:'fixed',bottom:0,left:0,right:0,height:'40px',background:`linear-gradient(to right,${BG2},#0f0800)`,borderTop:`1px solid #2a1800`,display:'flex',alignItems:'center',justifyContent:'center',gap:'12px',fontSize:'17px',color:'#3a2a10',zIndex:99,fontFamily:"'VT323',monospace",letterSpacing:'1px'}}>
+      <footer style={{position:'fixed',bottom:0,left:0,right:0,height:'68px',background:`linear-gradient(to right,${BG2},#0f0800)`,borderTop:`1px solid #2a1800`,display:'flex',alignItems:'center',justifyContent:'center',gap:'16px',fontSize:'17px',color:'#9a7d45',zIndex:99,fontFamily:"'VT323',monospace",letterSpacing:'1px'}}>
         <a href="https://www.turva.com.br" target="_blank" rel="noopener noreferrer" title="Fã-site oficial do Turva" style={{display:'flex',alignItems:'center',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.transform='scale(1.05)'} onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}>
-          <img src={FANSITE_BADGE} alt="Fã-site oficial do Turva" style={{display:'block',height:'32px',imageRendering:'pixelated'}}/>
+          <img src={FANSITE_BADGE} alt="Fã-site oficial do Turva" style={{display:'block',height:'60px',imageRendering:'pixelated'}}/>
         </a>
         <span>Feito com amor por:{' '}<a href="http://turva.com.br/home/Bot" target="_blank" rel="noopener noreferrer" style={{color:G,textDecoration:'none'}} onMouseEnter={e=>e.target.style.color='#fff'} onMouseLeave={e=>e.target.style.color=G}>Bot</a></span>
       </footer>
