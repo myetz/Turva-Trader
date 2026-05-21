@@ -19,7 +19,7 @@ const Badge=({cat})=>{const c=CAT_C[cat]||'#aaa';return<span style={{background:
 
 const Flash=({msg})=>{if(!msg?.text)return null;const m={error:{bg:'#1a0000',b:'#f44',t:'#f88'},success:{bg:'#001500',b:'#4f4',t:'#8f8'},info:{bg:'#1a1000',b:G,t:G}};const c=m[msg.type]||m.info;return<div style={{background:c.bg,borderBottom:`2px solid ${c.b}`,padding:'9px 24px',fontSize:'17px',color:c.t,textAlign:'center',fontFamily:"'VT323',monospace"}}>{msg.text}</div>;};
 
-const ChartTip=({active,payload,label})=>{if(!active||!payload?.length)return null;return<div style={{background:'#1a1208',border:`2px solid ${G}`,padding:'8px 14px',fontFamily:"'VT323',monospace"}}><div style={{color:'#887755',fontSize:'15px'}}>{fmtDate(label)}</div><div style={{color:G,fontFamily:"'Press Start 2P',monospace",fontSize:'12px'}}>{payload[0].value}c</div></div>;};
+const ChartTip=({active,payload,label})=>{if(!active||!payload?.length)return null;const d=payload[0].payload;return<div style={{background:'#1a1208',border:`2px solid ${G}`,padding:'10px 14px',fontFamily:"'VT323',monospace"}}><div style={{color:'#887755',fontSize:'15px',marginBottom:'4px'}}>{fmtDate(label)}</div><div style={{color:G,fontFamily:"'Press Start 2P',monospace",fontSize:'12px',marginBottom:'4px'}}>{payload[0].value}c <span style={{fontSize:'9px',color:'#aa8855'}}>média/un</span></div><div style={{color:'#7dffaa',fontSize:'16px'}}>{d.units} unidade{d.units!==1?'s':''} negociada{d.units!==1?'s':''}</div></div>;};
 
 const Corners=()=><>{['tl','tr','bl','br'].map(p=><div key={p} style={{position:'absolute',width:'10px',height:'10px',background:G,top:p[0]==='t'?-2:'auto',bottom:p[0]==='b'?-2:'auto',left:p[1]==='l'?-2:'auto',right:p[1]==='r'?-2:'auto'}}/>)}</>;
 
@@ -453,8 +453,13 @@ export default function App(){
   const quickCatalog=useMemo(()=>quickRaro?rarities.find(r=>r.raro===quickRaro):null,[rarities,quickRaro]);
   const quickInfo=useMemo(()=>quickRaro?uRaros.find(r=>r.raro===quickRaro):null,[uRaros,quickRaro]);
   const selTrades=useMemo(()=>selRaro?[...trades.filter(t=>t.raro===selRaro)].sort((a,b)=>b.data.localeCompare(a.data)):[],[trades,selRaro]);
-  const chartData=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]=[];by[t.data].push(t.precoPorUnidade);});return Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([date,ps])=>({date,preco:calcAvg(ps)}));},[selTrades]);
-  const dailyAvg=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]={precos:[],units:0};const q=Math.max(1,t.quantidade||1);for(let i=0;i<q;i++)by[t.data].precos.push(t.precoPorUnidade);by[t.data].units+=q;});return Object.entries(by).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,d])=>({date,avg:calcAvg(d.precos),units:d.units}));},[selTrades]);
+  const chartData=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]={precos:[],units:0};const q=Math.max(1,t.quantidade||1);for(let i=0;i<q;i++)by[t.data].precos.push(t.precoPorUnidade);by[t.data].units+=q;});return Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([date,d])=>({date,preco:calcAvg(d.precos),units:d.units}));},[selTrades]);
+  const dailyAvg=useMemo(()=>{const by={};selTrades.forEach(t=>{if(!by[t.data])by[t.data]={precos:[],units:0};const q=Math.max(1,t.quantidade||1);for(let i=0;i<q;i++)by[t.data].precos.push(t.precoPorUnidade);by[t.data].units+=q;});
+    // ordem cronológica (mais antigo primeiro) para calcular variação
+    const asc=Object.entries(by).sort((a,b)=>a[0].localeCompare(b[0])).map(([date,d])=>({date,avg:calcAvg(d.precos),units:d.units}));
+    asc.forEach((row,i)=>{row.change=i>0?row.avg-asc[i-1].avg:null;row.changePct=(i>0&&asc[i-1].avg>0)?Math.round((row.avg-asc[i-1].avg)/asc[i-1].avg*100):null;});
+    return asc.reverse(); // mais recente primeiro para exibição
+  },[selTrades]);
 
   const pStats=useMemo(()=>{
     const map={};
@@ -757,7 +762,7 @@ export default function App(){
                   <div style={{overflowX:'auto'}}>
                     {histView==='dia'?(
                       <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
-                        <thead><tr>{['DATA','UNID. VENDIDAS','MÉDIA/UN'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                        <thead><tr>{['DATA','UNID. VENDIDAS','MÉDIA/UN','VARIAÇÃO'].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
                         <tbody>
                           {!dailyAvg.length&&<tr><td colSpan={3} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
                           {dailyAvg.map((row,i)=>(
@@ -765,6 +770,9 @@ export default function App(){
                               <td style={{...td,color:'#7a5a30'}}>{fmtDate(row.date)}</td>
                               <td style={{...td,color:'#664400'}}>{row.units} un.</td>
                               <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'13px'}}>{row.avg}c</td>
+                              <td style={{...td,fontFamily:"'Press Start 2P'",fontSize:'11px',color:row.change===null?'#3a2a10':row.change>0?'#69db7c':row.change<0?'#f66':'#aa8855'}}>
+                                {row.change===null?'—':`${row.change>0?'▲ +':row.change<0?'▼ ':''}${row.change}c`}{row.changePct!==null&&row.change!==0?<span style={{fontSize:'10px',color:'#886633'}}> ({row.changePct>0?'+':''}{row.changePct}%)</span>:''}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -807,7 +815,7 @@ export default function App(){
           <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(200px,1fr))',gap:'10px',marginBottom:'16px'}}>
             {[
               {l:'ESTOQUE PARADO',v:`${totals.parado}c`,sub:'custo médio × estoque',color:G},
-              {l:'BALANÇO ATUAL',v:`${totals.balanco>=0?'+':''}${totals.balanco}c`,sub:totals.balanco>=0?'lucro acumulado':'prejuízo acumulado',color:totals.balanco>=0?'#69db7c':'#f66'},
+              {l:'BALANÇO TOTAL',v:`${totals.balanco>=0?'+':''}${totals.balanco}c`,sub:totals.balanco>0?'✓ lucro nas negociações':totals.balanco<0?'✕ prejuízo nas negociações':'sem movimentação',color:totals.balanco>0?'#69db7c':totals.balanco<0?'#f66':'#aa8855'},
               {l:'VALOR DE MERCADO',v:totals.mktTotal?`${totals.mktTotal}c`:'—',sub:'estoque × média do mercado',color:'#ffa94d'},
               {l:'MARGEM DE LUCRO',v:totals.margemGeral!==null?`${totals.margemGeral>=0?'+':''}${totals.margemGeral}%`:'—',sub:'ganho total sobre o investido',color:totals.margemGeral>=0?'#e599f7':'#ff8855'},
             ].map(s=>(
@@ -1370,14 +1378,12 @@ export default function App(){
         </div>
       </Modal>
 
-      {/* Selo Fã-site oficial */}
-      <a href="https://www.turva.com.br" target="_blank" rel="noopener noreferrer" title="Fã-site oficial do Turva" style={{position:'fixed',bottom:'38px',left:'10px',zIndex:88,display:'block',transition:'all .15s',filter:'drop-shadow(2px 2px 4px rgba(0,0,0,0.6))',opacity:0.85}} onMouseEnter={e=>{e.currentTarget.style.transform='scale(1.08)';e.currentTarget.style.filter=`drop-shadow(0 0 10px ${G}66)`;}} onMouseLeave={e=>{e.currentTarget.style.transform='scale(1)';e.currentTarget.style.filter='drop-shadow(2px 2px 4px rgba(0,0,0,0.6))';}}>
-        <img src={FANSITE_BADGE} alt="Fã-site oficial do Turva" style={{display:'block',border:`2px solid ${G2}`,width:isMobile?'70px':'85px'}}/>
-      </a>
-
       {/* Footer */}
-      <footer style={{position:'fixed',bottom:0,left:0,right:0,height:'32px',background:`linear-gradient(to right,${BG2},#0f0800)`,borderTop:`1px solid #2a1800`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'17px',color:'#3a2a10',zIndex:99,fontFamily:"'VT323',monospace",letterSpacing:'1px'}}>
-        Feito com amor por:{' '}<a href="http://turva.com.br/home/Bot" target="_blank" rel="noopener noreferrer" style={{color:G,textDecoration:'none',marginLeft:'5px'}} onMouseEnter={e=>e.target.style.color='#fff'} onMouseLeave={e=>e.target.style.color=G}>Bot</a>
+      <footer style={{position:'fixed',bottom:0,left:0,right:0,height:'40px',background:`linear-gradient(to right,${BG2},#0f0800)`,borderTop:`1px solid #2a1800`,display:'flex',alignItems:'center',justifyContent:'center',gap:'12px',fontSize:'17px',color:'#3a2a10',zIndex:99,fontFamily:"'VT323',monospace",letterSpacing:'1px'}}>
+        <a href="https://www.turva.com.br" target="_blank" rel="noopener noreferrer" title="Fã-site oficial do Turva" style={{display:'flex',alignItems:'center',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.transform='scale(1.05)'} onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}>
+          <img src={FANSITE_BADGE} alt="Fã-site oficial do Turva" style={{display:'block',border:`1px solid ${G2}`,height:'30px'}}/>
+        </a>
+        <span>Feito com amor por:{' '}<a href="http://turva.com.br/home/Bot" target="_blank" rel="noopener noreferrer" style={{color:G,textDecoration:'none'}} onMouseEnter={e=>e.target.style.color='#fff'} onMouseLeave={e=>e.target.style.color=G}>Bot</a></span>
       </footer>
     </div>
   );
