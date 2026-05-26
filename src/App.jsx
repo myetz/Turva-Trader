@@ -137,7 +137,7 @@ export default function App(){
   const [modCPage,setModCPage]=useState(0);
   const PAGE=15;
   const today=new Date().toISOString().split('T')[0];
-  const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],valorManual:'',data:today,jogadorA:'',jogadorB:''};
+  const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],moedasA:'',moedasB:'',valorManual:'',data:today,jogadorA:'',jogadorB:''};
   const eT={raro:'',quantidade:1,categoria:'Raro Exclusivo',priceMode:'total',precoVenda:'',precoPorUnidade:'',data:today,vendedor:'',comprador:''};
   const eO={raro:'',quantidade:1,tipo:'compra',precoTotal:'',precoPorUnidade:'',data:today,priceMode:'total'};
   const eOrder={tipo:'compra',items:[{raro:'',quantidade:1,preco:''}],observacao:''};
@@ -380,26 +380,34 @@ export default function App(){
     flash(user.is_admin?'Registrada!':'Enviada para aprovação ⏳','success');
   }
 
-  // ── Avaliação de troca (escambo) ──
-  // Confiança = unidades já negociadas; valor = avgPrice (média 20un) × qtd
+  // ── Avaliação de negociação (venda, troca ou mista, com moedas) ──
+  // Moedas = valor exato (âncora forte). Raro conhecido = avgPrice estimado.
   function avaliarTroca(trf){
     if(!trf)return null;
-    const info=lado=>{
+    const info=(lado,moedas)=>{
       const itens=lado.filter(x=>x.raro.trim());
-      let valor=0,confianca=0,temPreco=false;
+      const coins=Math.max(0,parseInt(moedas)||0);
+      let rarosValue=0,confianca=0,hasUnknown=false;
       itens.forEach(x=>{
         const u=uRaros.find(r=>r.raro===x.raro);
         const qtd=Math.max(1,parseInt(x.qtd)||1);
-        if(u&&u.count>0){valor+=u.avgPrice*qtd;confianca+=u.count;temPreco=true;}
+        if(u&&u.count>0){rarosValue+=u.avgPrice*qtd;confianca+=u.count;}
+        else hasUnknown=true;
       });
-      return{itens,valor:Math.round(valor),confianca,temPreco};
+      return{itens,coins,rarosValue:Math.round(rarosValue),valor:Math.round(rarosValue)+coins,confianca,hasUnknown,isPureCoins:itens.length===0&&coins>0};
     };
-    const A=info(trf.ladoA),B=info(trf.ladoB);
-    const valido=A.itens.length>0&&B.itens.length>0;
+    const A=info(trf.ladoA,trf.moedasA),B=info(trf.ladoB,trf.moedasB);
+    const totalRaros=A.itens.length+B.itens.length;
+    // cada lado precisa ter algo (raro ou moeda) e precisa existir ao menos 1 raro no total
+    const valido=(A.itens.length>0||A.coins>0)&&(B.itens.length>0||B.coins>0)&&totalRaros>=1;
+    const canA=!A.hasUnknown,canB=!B.hasUnknown; // lado totalmente avaliável
     let ancora=null,V=0,manual=false;
-    if(A.temPreco&&B.temPreco)ancora=A.confianca>=B.confianca?'A':'B';
-    else if(A.temPreco)ancora='A';
-    else if(B.temPreco)ancora='B';
+    if(canA&&canB){
+      if(A.isPureCoins&&!B.isPureCoins)ancora='A';      // moedas = preço real pago
+      else if(B.isPureCoins&&!A.isPureCoins)ancora='B';
+      else ancora=A.confianca>=B.confianca?'A':'B';      // o mais negociado ancora
+    }else if(canA)ancora='A';
+    else if(canB)ancora='B';
     if(ancora)V=ancora==='A'?A.valor:B.valor;
     else{manual=true;V=Math.max(0,parseInt(trf.valorManual)||0);}
     // Ajuste manual sempre tem prioridade (negócio fora da curva)
@@ -409,11 +417,13 @@ export default function App(){
 
   async function doAddTroca(){
     const av=avaliarTroca(trF);
-    if(!av||!av.valido){flash('Adicione pelo menos um raro em cada lado.','error');return;}
+    if(!av||!av.valido){flash('Adicione ao menos um raro e preencha os dois lados.','error');return;}
     if(!trF.jogadorA.trim()||!trF.jogadorB.trim()||!trF.data){flash('Preencha os jogadores e a data.','error');return;}
-    if(av.V<=0){flash('Defina o valor estimado da troca.','error');return;}
-    // Distribui o valor V entre os raros de cada lado (proporcional ao valor de mercado; se desconhecido, por unidade)
-    const distribui=(side)=>{
+    if(av.V<=0){flash('Defina o valor da negociação.','error');return;}
+    // Distribui o valor entre os raros de cada lado. Para o lado âncora usa o valor de mercado;
+    // para o outro, o restante após descontar as moedas do próprio lado.
+    const distribui=(side,isAncora)=>{
+      const target=isAncora?side.rarosValue:Math.max(0,av.V-side.coins);
       const itens=side.itens.map(x=>{
         const u=uRaros.find(r=>r.raro===x.raro);
         const qtd=Math.max(1,parseInt(x.qtd)||1);
@@ -423,30 +433,33 @@ export default function App(){
       const somaPeso=itens.reduce((s,i)=>s+i.peso,0);
       const somaQtd=itens.reduce((s,i)=>s+i.qtd,0);
       return itens.map(i=>{
-        const fracao=somaPeso>0?i.peso/somaPeso:i.qtd/somaQtd;
-        const total=Math.round(av.V*fracao);
+        const fracao=somaPeso>0?i.peso/somaPeso:(somaQtd>0?i.qtd/somaQtd:0);
+        const total=Math.round(target*fracao);
         return{...i,total,ppu:Math.round(total/i.qtd)};
       });
     };
-    const distA=distribui(av.A),distB=distribui(av.B);
-    const descA=distA.map(i=>`${i.qtd}x ${i.raro}`).join(' + ');
-    const descB=distB.map(i=>`${i.qtd}x ${i.raro}`).join(' + ');
+    const distA=distribui(av.A,av.ancora==='A'),distB=distribui(av.B,av.ancora==='B');
+    // Descrição de cada lado (raros + moedas) para o marcador 🔄
+    const desc=(dist,coins)=>{const p=dist.map(i=>`${i.qtd}x ${i.raro}`);if(coins>0)p.push(`${coins}c`);return p.join(' + ');};
+    const descA=desc(distA,av.A.coins),descB=desc(distB,av.B.coins);
     setLoading(true);
     const rows=[];
-    // Lado A: jogadorA entregou esses raros (vendedor=jogadorA, comprador=jogadorB)
+    const st=user.is_admin?'approved':'pending';
+    // Lado A: jogadorA entregou (vendedor=A, comprador=B). É troca se o lado B tiver raros; senão é venda normal.
     distA.forEach(i=>{
       const cat=rarities.find(r=>r.raro===i.raro)?.categoria||'Outros';
-      rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorA.trim(),comprador:trF.jogadorB.trim(),lancado_por:user.username,status:user.is_admin?'approved':'pending',troca_info:`🔄 trocado por: ${descB}`});
+      rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorA.trim(),comprador:trF.jogadorB.trim(),lancado_por:user.username,status:st,troca_info:av.B.itens.length>0?`🔄 trocado por: ${descB}`:null});
     });
     distB.forEach(i=>{
       const cat=rarities.find(r=>r.raro===i.raro)?.categoria||'Outros';
-      rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorB.trim(),comprador:trF.jogadorA.trim(),lancado_por:user.username,status:user.is_admin?'approved':'pending',troca_info:`🔄 trocado por: ${descA}`});
+      rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorB.trim(),comprador:trF.jogadorA.trim(),lancado_por:user.username,status:st,troca_info:av.A.itens.length>0?`🔄 trocado por: ${descA}`:null});
     });
     const {error}=await supabase.from('trades').insert(rows);
     setLoading(false);
     if(error){flash(`Erro ao salvar: ${error.message}`,'error');return;}
     await loadAll();setShowTroca(false);setTrF(eTroca);
-    flash(user.is_admin?'Troca registrada! 🔄':'Troca enviada para aprovação ⏳','success');
+    const ehTroca=av.A.itens.length>0&&av.B.itens.length>0;
+    flash(user.is_admin?(ehTroca?'Troca registrada! 🔄':'Negociação registrada!'):'Enviada para aprovação ⏳','success');
   }
 
   function handleRaroSelect(raro){
@@ -786,8 +799,7 @@ export default function App(){
           <div style={{flex:1}}/>
           <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 14px'}}>
             <span style={{color:'#9a7d45',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
-            {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR</button>}
-            {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px',background:'#1a1000',border:'1px solid #9400d3',color:'#c98fff'}} onClick={()=>{setTrF(eTroca);setShowTroca(true);}}>🔄 TROCA</button>}
+            {tab==='mercado'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);}}>+ REGISTRAR</button>}
             {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
             {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
             <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
@@ -817,8 +829,7 @@ export default function App(){
             </div>
             <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:'9px'}}>
               <div style={{color:'#9a7d45',fontSize:'12px',letterSpacing:'1px',fontFamily:"'Press Start 2P',monospace",marginBottom:'2px'}}>AÇÕES</div>
-              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});setMenuOpen(false);}}>+ REGISTRAR</button>}
-              {tab==='mercado'&&<button style={{...btnD,textAlign:'center',fontSize:'16px',background:'#1a1000',border:'1px solid #9400d3',color:'#c98fff'}} onClick={()=>{setTrF(eTroca);setShowTroca(true);setMenuOpen(false);}}>🔄 REGISTRAR TROCA</button>}
+              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);setMenuOpen(false);}}>+ REGISTRAR NEGOCIAÇÃO</button>}
               {tab==='painel'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowOM(true);setMenuOpen(false);}}>+ OPERAÇÃO</button>}
               {tab==='negocios'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);setMenuOpen(false);}}>+ NOVA ORDEM</button>}
               <button style={{...btnD,textAlign:'center',fontSize:'16px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);setMenuOpen(false);}}>? TUTORIAL</button>
@@ -968,7 +979,7 @@ export default function App(){
                     <div style={{fontFamily:"'Press Start 2P'",fontSize:'14px',color:G,marginBottom:'8px',textShadow:`2px 2px 0 #443300`}}>{selRaro}</div>
                     <Badge cat={selInfo?.categoria||''}/>
                   </div>
-                  <button style={{...btnD,padding:'7px 14px',fontSize:'17px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro,categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR NEG.</button>
+                  <button style={{...btnY,padding:'7px 14px',fontSize:'17px'}} onClick={()=>{setTrF({...eTroca,ladoA:[{raro:selRaro,qtd:1}]});setShowTroca(true);}}>+ REGISTRAR NEG.</button>
                 </div>
 
                 {selCatalog&&(
@@ -1572,54 +1583,55 @@ export default function App(){
         </div>
       </Modal>
 
-      {/* Registrar Troca (escambo) */}
-      <Modal show={showTroca} onClose={()=>setShowTroca(false)} title="🔄 REGISTRAR TROCA" width="560px">
+      {/* Registrar Negociação (venda, troca ou mista) */}
+      <Modal show={showTroca} onClose={()=>setShowTroca(false)} title="◆ REGISTRAR NEGOCIAÇÃO" width="560px">
         <Flash msg={msg}/>
         {trF&&(()=>{
           const av=avaliarTroca(trF);
-          const renderLado=(lado,key,titulo,cor)=>(
+          const renderLado=(lado,key,moedasKey,titulo,cor)=>(
             <div style={{background:'#0d0800',border:`1px solid ${cor}44`,borderLeft:`3px solid ${cor}`,padding:'12px',marginBottom:'10px'}}>
               <div style={{color:cor,marginBottom:'8px',fontFamily:"'Press Start 2P'",fontSize:'9px',letterSpacing:'1px'}}>{titulo}</div>
-              {trF[key].map((item,idx)=>{
-                const u=uRaros.find(r=>r.raro===item.raro);
-                return(
-                  <div key={idx} style={{display:'flex',gap:'6px',marginBottom:'7px',alignItems:'center'}}>
-                    <input className="inp" list="raros-list" style={{...inp,flex:1,padding:'6px 9px',fontSize:'15px'}} placeholder="nome do raro" value={item.raro} onChange={e=>{const n=[...trF[key]];n[idx]={...n[idx],raro:e.target.value};setTrF({...trF,[key]:n});}}/>
-                    <input className="inp" type="number" min="1" style={{...inp,width:'58px',padding:'6px',fontSize:'15px',textAlign:'center'}} value={item.qtd} onChange={e=>{const n=[...trF[key]];n[idx]={...n[idx],qtd:e.target.value};setTrF({...trF,[key]:n});}}/>
-                    {trF[key].length>1&&<button style={{background:'transparent',border:'none',color:'#f66',cursor:'pointer',fontSize:'18px',padding:'0 4px'}} onClick={()=>{const n=trF[key].filter((_,i)=>i!==idx);setTrF({...trF,[key]:n});}}>✕</button>}
-                  </div>
-                );
-              })}
+              {trF[key].map((item,idx)=>(
+                <div key={idx} style={{display:'flex',gap:'6px',marginBottom:'7px',alignItems:'center'}}>
+                  <input className="inp" list="raros-list" style={{...inp,flex:1,padding:'6px 9px',fontSize:'15px'}} placeholder="nome do raro" value={item.raro} onChange={e=>{const n=[...trF[key]];n[idx]={...n[idx],raro:e.target.value};setTrF({...trF,[key]:n});}}/>
+                  <input className="inp" type="number" min="1" style={{...inp,width:'58px',padding:'6px',fontSize:'15px',textAlign:'center'}} value={item.qtd} onChange={e=>{const n=[...trF[key]];n[idx]={...n[idx],qtd:e.target.value};setTrF({...trF,[key]:n});}}/>
+                  {trF[key].length>1&&<button style={{background:'transparent',border:'none',color:'#f66',cursor:'pointer',fontSize:'18px',padding:'0 4px'}} onClick={()=>{const n=trF[key].filter((_,i)=>i!==idx);setTrF({...trF,[key]:n});}}>✕</button>}
+                </div>
+              ))}
+              <div style={{display:'flex',alignItems:'center',gap:'8px',marginTop:'4px',marginBottom:'6px'}}>
+                <span style={{color:'#ffd700',fontSize:'15px'}}>💰 moedas:</span>
+                <input className="inp" type="number" min="0" style={{...inp,width:'110px',padding:'5px 8px',fontSize:'15px'}} placeholder="0c" value={trF[moedasKey]} onChange={e=>setTrF({...trF,[moedasKey]:e.target.value})}/>
+              </div>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'4px'}}>
                 <button style={{background:'transparent',border:`1px dashed ${cor}66`,color:cor,cursor:'pointer',fontSize:'14px',padding:'4px 10px',fontFamily:"'VT323',monospace"}} onClick={()=>setTrF({...trF,[key]:[...trF[key],{raro:'',qtd:1}]})}>+ adicionar raro</button>
-                {(()=>{const side=key==='ladoA'?av?.A:av?.B;return side?.temPreco?<span style={{color:'#9a7d45',fontSize:'13px'}}>≈ {side.valor}c em mercado</span>:side?.itens.length?<span style={{color:'#9400d3',fontSize:'13px'}}>sem preço de mercado</span>:null;})()}
+                {(()=>{const side=key==='ladoA'?av?.A:av?.B;if(!side)return null;if(side.itens.length===0&&side.coins>0)return null;return !side.hasUnknown&&side.itens.length?<span style={{color:'#9a7d45',fontSize:'13px'}}>≈ {side.valor}c</span>:side.itens.length?<span style={{color:'#9400d3',fontSize:'13px'}}>raro sem preço ainda</span>:null;})()}
               </div>
             </div>
           );
           return(
             <div>
               <datalist id="raros-list">{rarities.map(r=><option key={r.raro} value={r.raro}/>)}</datalist>
-              <div style={{color:'#c9a85f',fontSize:'15px',marginBottom:'14px'}}>Informe os raros de cada lado. O sistema calcula os preços automaticamente usando o lado mais negociado como referência.</div>
+              <div style={{color:'#c9a85f',fontSize:'15px',marginBottom:'14px'}}>Registre uma <b style={{color:G}}>venda</b> (raro por moedas), uma <b style={{color:'#c98fff'}}>troca</b> (raro por raro) ou <b style={{color:'#69db7c'}}>mista</b> (raro + moedas). Coloque as moedas no lado em que elas entraram. O sistema calcula os preços automaticamente.</div>
 
-              {renderLado(trF.ladoA,'ladoA','LADO A — O QUE SAIU','#7bb8ff')}
-              <div style={{textAlign:'center',color:'#9400d3',fontSize:'22px',margin:'2px 0 8px'}}>🔄</div>
-              {renderLado(trF.ladoB,'ladoB','LADO B — O QUE ENTROU','#69db7c')}
+              {renderLado(trF.ladoA,'ladoA','moedasA','LADO A — O QUE O JOGADOR A ENTREGOU','#7bb8ff')}
+              <div style={{textAlign:'center',color:'#9400d3',fontSize:'22px',margin:'2px 0 8px'}}>⇅</div>
+              {renderLado(trF.ladoB,'ladoB','moedasB','LADO B — O QUE O JOGADOR A RECEBEU','#69db7c')}
 
               {/* Resultado da avaliação */}
               {av?.valido&&(
                 <div style={{background:'#130f0a',border:`1px solid ${G}55`,padding:'12px 14px',marginBottom:'14px'}}>
                   {av.manual?(
                     <div>
-                      <div style={{color:'#ffa94d',fontSize:'15px',marginBottom:'8px'}}>⚠ Nenhum dos raros tem preço de mercado ainda. Informe o valor total estimado desta troca (uma vez só):</div>
+                      <div style={{color:'#ffa94d',fontSize:'15px',marginBottom:'8px'}}>⚠ Nenhum dos raros tem preço de mercado ainda. Informe o valor total estimado desta negociação (uma vez só):</div>
                       <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
                         <input className="inp" type="number" min="0" style={{...inp,width:'140px'}} placeholder="valor total (c)" value={trF.valorManual} onChange={e=>setTrF({...trF,valorManual:e.target.value})}/>
-                        <span style={{color:'#9a7d45',fontSize:'14px'}}>moedas no total da troca</span>
+                        <span style={{color:'#9a7d45',fontSize:'14px'}}>moedas no total</span>
                       </div>
                     </div>
                   ):(
                     <div>
-                      <div style={{color:'#9a7d45',fontSize:'13px',marginBottom:'4px'}}>Lado âncora: <span style={{color:G}}>{av.ancora==='A'?'A (o que saiu)':'B (o que entrou)'}</span> · mais negociado, define o valor</div>
-                      <div style={{color:G,fontSize:'20px',fontFamily:"'Press Start 2P'",fontSize:'13px'}}>Valor da troca: {av.V}c</div>
+                      <div style={{color:'#9a7d45',fontSize:'13px',marginBottom:'4px'}}>Referência: <span style={{color:G}}>{av.ancora==='A'?'Lado A':'Lado B'}</span> {(av.ancora==='A'?av.A:av.B).isPureCoins?'(moedas = preço real)':'(mais negociado)'} · define o valor</div>
+                      <div style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'13px'}}>Valor da negociação: {av.V}c</div>
                       <div style={{marginTop:'8px'}}>
                         <label style={{...lbl,fontSize:'13px'}}>Ajustar valor (opcional, se foi um negócio fora da curva):</label>
                         <input className="inp" type="number" min="0" style={{...inp,width:'140px'}} placeholder={`${av.V}`} value={trF.valorManual} onChange={e=>setTrF({...trF,valorManual:e.target.value})}/>
@@ -1631,13 +1643,13 @@ export default function App(){
               )}
 
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
-                <div><label style={lbl}>JOGADOR A (saiu os raros) *</label><input className="inp" style={inp} placeholder="nick" value={trF.jogadorA} onChange={e=>setTrF({...trF,jogadorA:e.target.value})}/></div>
+                <div><label style={lbl}>JOGADOR A (entregou) *</label><input className="inp" style={inp} placeholder="nick" value={trF.jogadorA} onChange={e=>setTrF({...trF,jogadorA:e.target.value})}/></div>
                 <div><label style={lbl}>JOGADOR B (recebeu) *</label><input className="inp" style={inp} placeholder="nick" value={trF.jogadorB} onChange={e=>setTrF({...trF,jogadorB:e.target.value})}/></div>
               </div>
               <div style={{marginBottom:'18px'}}><label style={lbl}>DATA *</label><input className="inp" style={{...inp,maxWidth:'200px'}} type="date" value={trF.data} onChange={e=>setTrF({...trF,data:e.target.value})}/></div>
 
               <div style={{display:'flex',gap:'10px'}}>
-                <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={()=>{const ov=trF.valorManual;const merged={...trF};if(!av.manual&&ov)merged.valorManual=ov;setTrF(merged);doAddTroca();}} disabled={loading}>{loading?'SALVANDO...':'✓ REGISTRAR TROCA'}</button>
+                <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doAddTroca} disabled={loading}>{loading?'SALVANDO...':'✓ REGISTRAR'}</button>
                 <button style={btnG} onClick={()=>setShowTroca(false)}>CANCELAR</button>
               </div>
             </div>
