@@ -129,6 +129,7 @@ export default function App(){
   const [loading,setLoading]=useState(false);
   const [isMobile,setIsMobile]=useState(typeof window!=='undefined'&&window.innerWidth<768);
   const [menuOpen,setMenuOpen]=useState(false);
+  const [hoverTab,setHoverTab]=useState(null);
   // Pagination
   const [mPage,setMPage]=useState(0);
   const [pPage,setPPage]=useState(0);
@@ -533,12 +534,15 @@ export default function App(){
   async function approveTrade(id){await supabase.from('trades').update({status:'approved'}).eq('id',id);await loadAll();flash('Aprovada ✅','success');}
   async function rejectTrade(id){if(!window.confirm('Rejeitar e excluir?'))return;await supabase.from('trades').delete().eq('id',id);await loadAll();flash('Rejeitada.','info');}
   async function adminDeleteTrade(id){if(!window.confirm('Excluir esta negociação?'))return;await supabase.from('trades').delete().eq('id',id);await loadAll();flash('Excluída.','info');}
-  function openEditTrade(t){setEditingTrade({id:t.id,raro:t.raro,quantidade:t.quantidade,categoria:t.categoria||'Raro Exclusivo',precoVenda:t.preco_venda||t.precoVenda,data:t.data,vendedor:t.vendedor,comprador:t.comprador});setShowEditModal(true);}
+  function openEditTrade(t){setEditingTrade({id:t.id,raro:t.raro,quantidade:t.quantidade,categoria:t.categoria||'Raro Exclusivo',precoVenda:t.preco_venda||t.precoVenda,precoPorUnidade:t.preco_por_unidade||t.precoPorUnidade||0,priceMode:'total',data:t.data,vendedor:t.vendedor,comprador:t.comprador,trocaInfo:t.troca_info||t.trocaInfo||null});setShowEditModal(true);}
   async function doEditTrade(){
-    const qtd=Math.max(1,parseInt(editingTrade.quantidade)||1),pv=parseFloat(editingTrade.precoVenda);
+    const qtd=Math.max(1,parseInt(editingTrade.quantidade)||1);
+    let pv,ppu;
+    if(editingTrade.priceMode==='unit'){ppu=parseFloat(editingTrade.precoPorUnidade);pv=Math.round(ppu*qtd);}
+    else{pv=parseFloat(editingTrade.precoVenda);ppu=Math.round(pv/qtd);}
     if(isNaN(pv)||pv<0){flash('Preço inválido.','error');return;}
     setLoading(true);
-    await supabase.from('trades').update({raro:editingTrade.raro.trim(),quantidade:qtd,categoria:editingTrade.categoria,preco_venda:pv,preco_por_unidade:Math.round(pv/qtd),data:editingTrade.data,vendedor:editingTrade.vendedor.trim(),comprador:editingTrade.comprador.trim()}).eq('id',editingTrade.id);
+    await supabase.from('trades').update({raro:editingTrade.raro.trim(),quantidade:qtd,categoria:editingTrade.categoria,preco_venda:pv,preco_por_unidade:ppu,data:editingTrade.data,vendedor:editingTrade.vendedor.trim(),comprador:editingTrade.comprador.trim()}).eq('id',editingTrade.id);
     setLoading(false);await loadAll();setShowEditModal(false);setEditingTrade(null);flash('Atualizada!','success');
   }
 
@@ -768,6 +772,13 @@ export default function App(){
 
   // ── Dashboard ──────────────────────────────────────────────────────
   const tabs=[['mercado','⚔ MERCADO'],['painel','📊 MEU PAINEL'],['negocios','🤝 NEGOCIAÇÕES'],...(user?.is_admin?[['mod','🛡 MODERAÇÃO'],['insights','📈 INSIGHTS']]:[])] ;
+  const TAB_DESC={
+    mercado:{t:'Cotações dos raros',d:'Veja os preços médios, o histórico e registre novas negociações (vendas e trocas).'},
+    painel:{t:'Sua carteira pessoal',d:'Controle suas compras e vendas e acompanhe lucro, estoque e valor de mercado.'},
+    negocios:{t:'Mural de ofertas',d:'Publique o que quer comprar ou vender e veja as ofertas de outros jogadores.'},
+    mod:{t:'Painel do moderador',d:'Aprove negociações pendentes, edite registros, modere o chat e gerencie usuários.'},
+    insights:{t:'Estatísticas do site',d:'Acessos por dia, usuários mais ativos e horários de pico.'},
+  };
 
   return(
     <div style={{fontFamily:"'VT323',monospace",background:BG,minHeight:'100vh',color:'#c8a870',fontSize:'18px'}}>
@@ -791,9 +802,15 @@ export default function App(){
           </div>
           {tabs.map(([id,label])=>(
             <button key={id} className={`tab-btn ${tab===id?'tab-a':'tab-i'}`}
-              style={{padding:'0 16px',fontSize:'12px',fontFamily:"'Press Start 2P',monospace",cursor:'pointer',border:'none',borderRight:`1px solid #1a1000`,borderBottom:'3px solid transparent',transition:'all .15s',background:'transparent',color:'#9a7d45',letterSpacing:'.3px',...(id==='mod'&&pendingTrades.length>0?{color:'#ff6b6b'}:{})}}
-              onClick={()=>setTab(id)}>
+              style={{position:'relative',padding:'0 16px',fontSize:'12px',fontFamily:"'Press Start 2P',monospace",cursor:'pointer',border:'none',borderRight:`1px solid #1a1000`,borderBottom:'3px solid transparent',transition:'all .15s',background:'transparent',color:'#9a7d45',letterSpacing:'.3px',...(id==='mod'&&pendingTrades.length>0?{color:'#ff6b6b'}:{})}}
+              onClick={()=>setTab(id)} onMouseEnter={()=>setHoverTab(id)} onMouseLeave={()=>setHoverTab(null)}>
               {label}{id==='mod'&&pendingTrades.length>0&&<span style={{marginLeft:'6px',background:'#f44',color:'#fff',padding:'0 5px',fontSize:'12px',fontFamily:"'VT323',monospace"}}>{pendingTrades.length}</span>}
+              {hoverTab===id&&TAB_DESC[id]&&(
+                <div style={{position:'absolute',top:'calc(100% + 6px)',left:'8px',width:'240px',background:BG2,border:`1px solid ${G}`,boxShadow:'0 6px 24px rgba(0,0,0,.8)',padding:'10px 12px',textAlign:'left',zIndex:120,animation:'sd .15s ease',pointerEvents:'none'}}>
+                  <div style={{color:G,fontSize:'15px',fontFamily:"'VT323',monospace",marginBottom:'3px',fontWeight:'bold'}}>{TAB_DESC[id].t}</div>
+                  <div style={{color:'#c9a85f',fontSize:'14px',fontFamily:"'VT323',monospace",lineHeight:1.35}}>{TAB_DESC[id].d}</div>
+                </div>
+              )}
             </button>
           ))}
           <div style={{flex:1}}/>
@@ -821,9 +838,12 @@ export default function App(){
             <div style={{padding:'8px 0',borderBottom:`1px solid #2a1800`}}>
               <div style={{color:'#9a7d45',fontSize:'12px',padding:'4px 14px',letterSpacing:'1px',fontFamily:"'Press Start 2P',monospace"}}>NAVEGAÇÃO</div>
               {tabs.map(([id,label])=>(
-                <div key={id} onClick={()=>{setTab(id);setMenuOpen(false);}} style={{padding:'13px 14px',color:tab===id?G:'#cdac72',fontSize:'17px',background:tab===id?'#1a1000':'transparent',borderLeft:`3px solid ${tab===id?G:'transparent'}`,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span>{label}</span>
-                  {id==='mod'&&pendingTrades.length>0&&<span style={{background:'#f44',color:'#fff',padding:'0 6px',fontSize:'13px'}}>{pendingTrades.length}</span>}
+                <div key={id} onClick={()=>{setTab(id);setMenuOpen(false);}} style={{padding:'12px 14px',color:tab===id?G:'#cdac72',background:tab===id?'#1a1000':'transparent',borderLeft:`3px solid ${tab===id?G:'transparent'}`,cursor:'pointer'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:'17px'}}>
+                    <span>{label}</span>
+                    {id==='mod'&&pendingTrades.length>0&&<span style={{background:'#f44',color:'#fff',padding:'0 6px',fontSize:'13px'}}>{pendingTrades.length}</span>}
+                  </div>
+                  {TAB_DESC[id]&&<div style={{color:'#9a7d45',fontSize:'13px',marginTop:'2px',lineHeight:1.25}}>{TAB_DESC[id].d}</div>}
                 </div>
               ))}
             </div>
@@ -1254,7 +1274,7 @@ export default function App(){
                 <tbody>{modAItems.map((t,i)=>(
                   <tr key={t.id} className="rrow" style={{background:i%2===0?'#0d0800':'#0a0600'}}>
                     <td style={{...td,color:'#b08f4f'}}>{fmtDate(t.data)}</td>
-                    <td style={{...td,color:G,fontWeight:'bold'}}>{t.raro}</td>
+                    <td style={{...td,color:G,fontWeight:'bold'}}>{t.trocaInfo&&<span title={t.trocaInfo} style={{marginRight:'4px'}}>🔄</span>}{t.raro}</td>
                     <td style={{...td,color:'#bd9a5a'}}>{t.quantidade}</td>
                     <td style={{...td,color:'#cdac72'}}>{t.precoVenda}c</td>
                     <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.precoPorUnidade}c</td>
@@ -1744,11 +1764,24 @@ export default function App(){
       {/* Editar Trade */}
       <Modal show={showEditModal&&!!editingTrade} onClose={()=>{setShowEditModal(false);setEditingTrade(null);}} title="✎ EDITAR NEGOCIAÇÃO">
         {editingTrade&&<>
+          {editingTrade.trocaInfo&&<div style={{background:'#1a0a2a',border:'1px solid #9400d3',padding:'8px 12px',marginBottom:'13px',color:'#c98fff',fontSize:'15px'}}>🔄 Esta negociação faz parte de uma troca ({editingTrade.trocaInfo.replace('🔄 trocado por: ','trocado por: ')}). Editar aqui altera só este lado.</div>}
           <div style={{marginBottom:'13px'}}><label style={lbl}>RARO *</label><input className="inp" style={inp} value={editingTrade.raro} onChange={e=>setEditingTrade({...editingTrade,raro:e.target.value})} list="rl-edit"/><datalist id="rl-edit">{uRaros.map(r=><option key={r.raro} value={r.raro}/>)}</datalist></div>
+          <div style={{marginBottom:'13px'}}>
+            <label style={lbl}>COMO REPRECIFICAR</label>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
+              {[['total','💰 PREÇO TOTAL'],['unit','📊 POR UNIDADE']].map(([v,l])=>(
+                <button key={v} style={{...btnD,textAlign:'center',fontSize:'16px',background:editingTrade.priceMode===v?G:BG3,color:editingTrade.priceMode===v?'#000':G}} onClick={()=>setEditingTrade({...editingTrade,priceMode:v})}>{l}</button>
+              ))}
+            </div>
+          </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
             <div><label style={lbl}>QUANTIDADE *</label><input className="inp" style={inp} type="number" min="1" value={editingTrade.quantidade} onChange={e=>setEditingTrade({...editingTrade,quantidade:e.target.value})}/></div>
-            <div><label style={lbl}>PREÇO TOTAL (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoVenda} onChange={e=>setEditingTrade({...editingTrade,precoVenda:e.target.value})}/></div>
+            {editingTrade.priceMode==='unit'
+              ?<div><label style={lbl}>PREÇO POR UNIDADE (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoPorUnidade} onChange={e=>setEditingTrade({...editingTrade,precoPorUnidade:e.target.value})}/></div>
+              :<div><label style={lbl}>PREÇO TOTAL (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoVenda} onChange={e=>setEditingTrade({...editingTrade,precoVenda:e.target.value})}/></div>
+            }
           </div>
+          <div style={{color:'#9a7d45',fontSize:'14px',marginBottom:'13px'}}>{editingTrade.priceMode==='unit'?`Total: ${Math.round((parseFloat(editingTrade.precoPorUnidade)||0)*(parseInt(editingTrade.quantidade)||1))}c`:`Por unidade: ${Math.round((parseFloat(editingTrade.precoVenda)||0)/(parseInt(editingTrade.quantidade)||1))}c`}</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
             <div><label style={lbl}>VENDEDOR *</label><input className="inp" style={inp} value={editingTrade.vendedor} onChange={e=>setEditingTrade({...editingTrade,vendedor:e.target.value})}/></div>
             <div><label style={lbl}>COMPRADOR *</label><input className="inp" style={inp} value={editingTrade.comprador} onChange={e=>setEditingTrade({...editingTrade,comprador:e.target.value})}/></div>
