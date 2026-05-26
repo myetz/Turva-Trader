@@ -111,7 +111,6 @@ export default function App(){
   // Modals
   const [showTM,setShowTM]=useState(false);
   const [showTroca,setShowTroca]=useState(false);
-  const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],valorManual:'',data:today,jogadorA:'',jogadorB:''};
   const [trF,setTrF]=useState(null);
   const [showTutorial,setShowTutorial]=useState(false);
   const [showAccount,setShowAccount]=useState(false);
@@ -138,6 +137,7 @@ export default function App(){
   const [modCPage,setModCPage]=useState(0);
   const PAGE=15;
   const today=new Date().toISOString().split('T')[0];
+  const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],valorManual:'',data:today,jogadorA:'',jogadorB:''};
   const eT={raro:'',quantidade:1,categoria:'Raro Exclusivo',priceMode:'total',precoVenda:'',precoPorUnidade:'',data:today,vendedor:'',comprador:''};
   const eO={raro:'',quantidade:1,tipo:'compra',precoTotal:'',precoPorUnidade:'',data:today,priceMode:'total'};
   const eOrder={tipo:'compra',items:[{raro:'',quantidade:1,preco:''}],observacao:''};
@@ -1579,7 +1579,7 @@ export default function App(){
           const av=avaliarTroca(trF);
           const renderLado=(lado,key,titulo,cor)=>(
             <div style={{background:'#0d0800',border:`1px solid ${cor}44`,borderLeft:`3px solid ${cor}`,padding:'12px',marginBottom:'10px'}}>
-              <div style={{color:cor,fontSize:'14px',marginBottom:'8px',fontFamily:"'Press Start 2P'",fontSize:'9px',letterSpacing:'1px'}}>{titulo}</div>
+              <div style={{color:cor,marginBottom:'8px',fontFamily:"'Press Start 2P'",fontSize:'9px',letterSpacing:'1px'}}>{titulo}</div>
               {trF[key].map((item,idx)=>{
                 const u=uRaros.find(r=>r.raro===item.raro);
                 return(
