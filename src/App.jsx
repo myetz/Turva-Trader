@@ -112,6 +112,7 @@ export default function App(){
   const [showTM,setShowTM]=useState(false);
   const [showTroca,setShowTroca]=useState(false);
   const [trF,setTrF]=useState(null);
+  const [convertingId,setConvertingId]=useState(null);
   const [showTutorial,setShowTutorial]=useState(false);
   const [showAccount,setShowAccount]=useState(false);
   const [accForm,setAccForm]=useState({atual:'',nova:'',confirma:''});
@@ -456,8 +457,10 @@ export default function App(){
       rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorB.trim(),comprador:trF.jogadorA.trim(),lancado_por:user.username,status:st,troca_info:av.A.itens.length>0?`🔄 trocado por: ${descA}`:null});
     });
     const {error}=await supabase.from('trades').insert(rows);
+    if(error){setLoading(false);flash(`Erro ao salvar: ${error.message}`,'error');return;}
+    // Se está convertendo um trade antigo em troca, remove o registro original
+    if(convertingId){await supabase.from('trades').delete().eq('id',convertingId);setConvertingId(null);}
     setLoading(false);
-    if(error){flash(`Erro ao salvar: ${error.message}`,'error');return;}
     await loadAll();setShowTroca(false);setTrF(eTroca);
     const ehTroca=av.A.itens.length>0&&av.B.itens.length>0;
     flash(user.is_admin?(ehTroca?'Troca registrada! 🔄':'Negociação registrada!'):'Enviada para aprovação ⏳','success');
@@ -816,7 +819,7 @@ export default function App(){
           <div style={{flex:1}}/>
           <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 14px'}}>
             <span style={{color:'#9a7d45',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
-            {tab==='mercado'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);}}>+ REGISTRAR</button>}
+            {tab==='mercado'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setConvertingId(null);setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);}}>+ REGISTRAR</button>}
             {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
             {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
             <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
@@ -849,7 +852,7 @@ export default function App(){
             </div>
             <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:'9px'}}>
               <div style={{color:'#9a7d45',fontSize:'12px',letterSpacing:'1px',fontFamily:"'Press Start 2P',monospace",marginBottom:'2px'}}>AÇÕES</div>
-              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);setMenuOpen(false);}}>+ REGISTRAR NEGOCIAÇÃO</button>}
+              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setConvertingId(null);setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);setMenuOpen(false);}}>+ REGISTRAR NEGOCIAÇÃO</button>}
               {tab==='painel'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowOM(true);setMenuOpen(false);}}>+ OPERAÇÃO</button>}
               {tab==='negocios'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);setMenuOpen(false);}}>+ NOVA ORDEM</button>}
               <button style={{...btnD,textAlign:'center',fontSize:'16px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);setMenuOpen(false);}}>? TUTORIAL</button>
@@ -999,7 +1002,7 @@ export default function App(){
                     <div style={{fontFamily:"'Press Start 2P'",fontSize:'14px',color:G,marginBottom:'8px',textShadow:`2px 2px 0 #443300`}}>{selRaro}</div>
                     <Badge cat={selInfo?.categoria||''}/>
                   </div>
-                  <button style={{...btnY,padding:'7px 14px',fontSize:'17px'}} onClick={()=>{setTrF({...eTroca,ladoA:[{raro:selRaro,qtd:1}]});setShowTroca(true);}}>+ REGISTRAR NEG.</button>
+                  <button style={{...btnY,padding:'7px 14px',fontSize:'17px'}} onClick={()=>{setConvertingId(null);setTrF({...eTroca,ladoA:[{raro:selRaro,qtd:1}]});setShowTroca(true);}}>+ REGISTRAR NEG.</button>
                 </div>
 
                 {selCatalog&&(
@@ -1604,7 +1607,7 @@ export default function App(){
       </Modal>
 
       {/* Registrar Negociação (venda, troca ou mista) */}
-      <Modal show={showTroca} onClose={()=>setShowTroca(false)} title="◆ REGISTRAR NEGOCIAÇÃO" width="560px">
+      <Modal show={showTroca} onClose={()=>{setShowTroca(false);setConvertingId(null);}} title="◆ REGISTRAR NEGOCIAÇÃO" width="560px">
         <Flash msg={msg}/>
         {trF&&(()=>{
           const av=avaliarTroca(trF);
@@ -1631,6 +1634,7 @@ export default function App(){
           return(
             <div>
               <datalist id="raros-list">{rarities.map(r=><option key={r.raro} value={r.raro}/>)}</datalist>
+              {convertingId&&<div style={{background:'#1a0a2a',border:'1px solid #9400d3',padding:'9px 12px',marginBottom:'12px',color:'#c98fff',fontSize:'15px'}}>🔄 Convertendo uma negociação antiga em troca. O Lado A já foi preenchido com o raro original — adicione no Lado B o que foi recebido. O registro antigo será substituído ao salvar.</div>}
               <div style={{color:'#c9a85f',fontSize:'15px',marginBottom:'14px'}}>Registre uma <b style={{color:G}}>venda</b> (raro por moedas), uma <b style={{color:'#c98fff'}}>troca</b> (raro por raro) ou <b style={{color:'#69db7c'}}>mista</b> (raro + moedas). Coloque as moedas no lado em que elas entraram. O sistema calcula os preços automaticamente.</div>
 
               {renderLado(trF.ladoA,'ladoA','moedasA','LADO A — O QUE O JOGADOR A ENTREGOU','#7bb8ff')}
@@ -1670,7 +1674,7 @@ export default function App(){
 
               <div style={{display:'flex',gap:'10px'}}>
                 <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doAddTroca} disabled={loading}>{loading?'SALVANDO...':'✓ REGISTRAR'}</button>
-                <button style={btnG} onClick={()=>setShowTroca(false)}>CANCELAR</button>
+                <button style={btnG} onClick={()=>{setShowTroca(false);setConvertingId(null);}}>CANCELAR</button>
               </div>
             </div>
           );
@@ -1794,6 +1798,16 @@ export default function App(){
             <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doEditTrade} disabled={loading}>{loading?'SALVANDO...':'✓ SALVAR'}</button>
             <button style={btnG} onClick={()=>{setShowEditModal(false);setEditingTrade(null);}}>CANCELAR</button>
           </div>
+          {!editingTrade.trocaInfo&&(
+            <div style={{marginTop:'14px',paddingTop:'14px',borderTop:'1px solid #2a1800'}}>
+              <div style={{color:'#9a7d45',fontSize:'14px',marginBottom:'8px'}}>Esta negociação foi na verdade uma troca de raro por raro? Converta para registrar os dois lados corretamente:</div>
+              <button style={{...btnD,width:'100%',textAlign:'center',fontSize:'16px',background:'#1a0a2a',border:'1px solid #9400d3',color:'#c98fff'}} onClick={()=>{
+                setConvertingId(editingTrade.id);
+                setTrF({...eTroca,ladoA:[{raro:editingTrade.raro,qtd:parseInt(editingTrade.quantidade)||1}],jogadorA:editingTrade.vendedor,jogadorB:editingTrade.comprador,data:editingTrade.data});
+                setShowEditModal(false);setEditingTrade(null);setShowTroca(true);
+              }}>🔄 CONVERTER EM TROCA</button>
+            </div>
+          )}
         </>}
       </Modal>
 
