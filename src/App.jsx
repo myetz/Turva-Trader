@@ -110,6 +110,9 @@ export default function App(){
   const chatRef=useRef(null);
   // Modals
   const [showTM,setShowTM]=useState(false);
+  const [showTroca,setShowTroca]=useState(false);
+  const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],valorManual:'',data:today,jogadorA:'',jogadorB:''};
+  const [trF,setTrF]=useState(null);
   const [showTutorial,setShowTutorial]=useState(false);
   const [showAccount,setShowAccount]=useState(false);
   const [accForm,setAccForm]=useState({atual:'',nova:'',confirma:''});
@@ -126,6 +129,7 @@ export default function App(){
   const [msg,setMsg]=useState({text:'',type:'info'});
   const [loading,setLoading]=useState(false);
   const [isMobile,setIsMobile]=useState(typeof window!=='undefined'&&window.innerWidth<768);
+  const [menuOpen,setMenuOpen]=useState(false);
   // Pagination
   const [mPage,setMPage]=useState(0);
   const [pPage,setPPage]=useState(0);
@@ -211,11 +215,11 @@ export default function App(){
         ...(isAdm?[supabase.from('trades').select('*').eq('status','pending').order('created_at',{ascending:false})]:[]),
       ];
       const [tR,rR,pR,oR,...rest]=await Promise.all(baseQ);
-      if(tR?.data)setTrades(tR.data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
+      if(tR?.data)setTrades(tR.data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por,trocaInfo:x.troca_info})));
       if(rR?.data)setRarities(rR.data);
       if(pR?.data)setPortfolio(pR.data.map(x=>({...x,precoTotal:x.preco_total,precoPorUnidade:x.preco_por_unidade})));
       if(oR?.data)setOrders(oR.data);
-      if(rest[0]?.data)setPendingTrades(rest[0].data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por})));
+      if(rest[0]?.data)setPendingTrades(rest[0].data.map(x=>({...x,precoVenda:x.preco_venda,precoPorUnidade:x.preco_por_unidade,lancadoPor:x.lancado_por,trocaInfo:x.troca_info})));
       setUser(prev=>{
         const updated=prev?{...prev,is_admin:isAdm}:prev;
         if(updated)localStorage.setItem('tt-user',JSON.stringify(updated));
@@ -374,6 +378,75 @@ export default function App(){
     if(error){flash(`Erro ao salvar: ${error.message}`,'error');return;}
     await loadAll();setShowTM(false);setTF(eT);
     flash(user.is_admin?'Registrada!':'Enviada para aprovação ⏳','success');
+  }
+
+  // ── Avaliação de troca (escambo) ──
+  // Confiança = unidades já negociadas; valor = avgPrice (média 20un) × qtd
+  function avaliarTroca(trf){
+    if(!trf)return null;
+    const info=lado=>{
+      const itens=lado.filter(x=>x.raro.trim());
+      let valor=0,confianca=0,temPreco=false;
+      itens.forEach(x=>{
+        const u=uRaros.find(r=>r.raro===x.raro);
+        const qtd=Math.max(1,parseInt(x.qtd)||1);
+        if(u&&u.count>0){valor+=u.avgPrice*qtd;confianca+=u.count;temPreco=true;}
+      });
+      return{itens,valor:Math.round(valor),confianca,temPreco};
+    };
+    const A=info(trf.ladoA),B=info(trf.ladoB);
+    const valido=A.itens.length>0&&B.itens.length>0;
+    let ancora=null,V=0,manual=false;
+    if(A.temPreco&&B.temPreco)ancora=A.confianca>=B.confianca?'A':'B';
+    else if(A.temPreco)ancora='A';
+    else if(B.temPreco)ancora='B';
+    if(ancora)V=ancora==='A'?A.valor:B.valor;
+    else{manual=true;V=Math.max(0,parseInt(trf.valorManual)||0);}
+    // Ajuste manual sempre tem prioridade (negócio fora da curva)
+    if(trf.valorManual!==''&&trf.valorManual!=null&&!isNaN(parseInt(trf.valorManual)))V=Math.max(0,parseInt(trf.valorManual));
+    return{A,B,valido,ancora,V,manual};
+  }
+
+  async function doAddTroca(){
+    const av=avaliarTroca(trF);
+    if(!av||!av.valido){flash('Adicione pelo menos um raro em cada lado.','error');return;}
+    if(!trF.jogadorA.trim()||!trF.jogadorB.trim()||!trF.data){flash('Preencha os jogadores e a data.','error');return;}
+    if(av.V<=0){flash('Defina o valor estimado da troca.','error');return;}
+    // Distribui o valor V entre os raros de cada lado (proporcional ao valor de mercado; se desconhecido, por unidade)
+    const distribui=(side)=>{
+      const itens=side.itens.map(x=>{
+        const u=uRaros.find(r=>r.raro===x.raro);
+        const qtd=Math.max(1,parseInt(x.qtd)||1);
+        const peso=(u&&u.count>0?u.avgPrice:0)*qtd;
+        return{raro:x.raro.trim(),qtd,peso};
+      });
+      const somaPeso=itens.reduce((s,i)=>s+i.peso,0);
+      const somaQtd=itens.reduce((s,i)=>s+i.qtd,0);
+      return itens.map(i=>{
+        const fracao=somaPeso>0?i.peso/somaPeso:i.qtd/somaQtd;
+        const total=Math.round(av.V*fracao);
+        return{...i,total,ppu:Math.round(total/i.qtd)};
+      });
+    };
+    const distA=distribui(av.A),distB=distribui(av.B);
+    const descA=distA.map(i=>`${i.qtd}x ${i.raro}`).join(' + ');
+    const descB=distB.map(i=>`${i.qtd}x ${i.raro}`).join(' + ');
+    setLoading(true);
+    const rows=[];
+    // Lado A: jogadorA entregou esses raros (vendedor=jogadorA, comprador=jogadorB)
+    distA.forEach(i=>{
+      const cat=rarities.find(r=>r.raro===i.raro)?.categoria||'Outros';
+      rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorA.trim(),comprador:trF.jogadorB.trim(),lancado_por:user.username,status:user.is_admin?'approved':'pending',troca_info:`🔄 trocado por: ${descB}`});
+    });
+    distB.forEach(i=>{
+      const cat=rarities.find(r=>r.raro===i.raro)?.categoria||'Outros';
+      rows.push({raro:i.raro,quantidade:i.qtd,categoria:cat,preco_venda:i.total,preco_por_unidade:i.ppu,data:trF.data,vendedor:trF.jogadorB.trim(),comprador:trF.jogadorA.trim(),lancado_por:user.username,status:user.is_admin?'approved':'pending',troca_info:`🔄 trocado por: ${descA}`});
+    });
+    const {error}=await supabase.from('trades').insert(rows);
+    setLoading(false);
+    if(error){flash(`Erro ao salvar: ${error.message}`,'error');return;}
+    await loadAll();setShowTroca(false);setTrF(eTroca);
+    flash(user.is_admin?'Troca registrada! 🔄':'Troca enviada para aprovação ⏳','success');
   }
 
   function handleRaroSelect(raro){
@@ -686,28 +759,75 @@ export default function App(){
   return(
     <div style={{fontFamily:"'VT323',monospace",background:BG,minHeight:'100vh',color:'#c8a870',fontSize:'18px'}}>
       {/* ── Header ── */}
-      <header className="tab-bar" style={{background:`linear-gradient(to bottom,#1a1000,#0d0800)`,borderBottom:`3px solid ${G}`,display:'flex',alignItems:'stretch',height:isMobile?'48px':'54px',position:'sticky',top:0,zIndex:100,boxShadow:`0 4px 20px rgba(0,0,0,.9)`,overflowX:isMobile?'auto':'visible',overflowY:'hidden'}}>
-        <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'11px',color:G,textShadow:`2px 2px 0 #664400,0 0 20px ${G}44`,padding:'0 18px',display:'flex',alignItems:'center',borderRight:`2px solid #2a1800`,gap:'8px',flexShrink:0}}>
-          <span style={{fontSize:'18px'}}>🏆</span> TURVA TRADER
-        </div>
-        {tabs.map(([id,label])=>(
-          <button key={id} className={`tab-btn ${tab===id?'tab-a':'tab-i'}`}
-            style={{padding:'0 16px',fontSize:'12px',fontFamily:"'Press Start 2P',monospace",cursor:'pointer',border:'none',borderRight:`1px solid #1a1000`,borderBottom:'3px solid transparent',transition:'all .15s',background:'transparent',color:'#9a7d45',letterSpacing:'.3px',...(id==='mod'&&pendingTrades.length>0?{color:'#ff6b6b'}:{})}}
-            onClick={()=>setTab(id)}>
-            {label}{id==='mod'&&pendingTrades.length>0&&<span style={{marginLeft:'6px',background:'#f44',color:'#fff',padding:'0 5px',fontSize:'12px',fontFamily:"'VT323',monospace"}}>{pendingTrades.length}</span>}
+      {isMobile?(
+        /* MOBILE: logo + hambúrguer */
+        <header style={{background:`linear-gradient(to bottom,#1a1000,#0d0800)`,borderBottom:`3px solid ${G}`,display:'flex',alignItems:'center',justifyContent:'space-between',height:'48px',position:'sticky',top:0,zIndex:100,boxShadow:`0 4px 20px rgba(0,0,0,.9)`,padding:'0 12px'}}>
+          <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'10px',color:G,textShadow:`1px 1px 0 #664400`,display:'flex',alignItems:'center',gap:'6px'}}>
+            <span style={{fontSize:'15px'}}>🏆</span> TURVA TRADER
+          </div>
+          <button aria-label="Abrir menu" style={{background:'#1a1000',border:`1px solid ${G}`,color:G,width:'38px',height:'32px',cursor:'pointer',fontSize:'20px',display:'flex',alignItems:'center',justifyContent:'center',padding:0,position:'relative'}} onClick={()=>setMenuOpen(true)}>
+            ☰
+            {user?.is_admin&&pendingTrades.length>0&&<span style={{position:'absolute',top:'-6px',right:'-6px',background:'#f44',color:'#fff',padding:'0 5px',fontSize:'11px',fontFamily:"'VT323',monospace",borderRadius:'8px'}}>{pendingTrades.length}</span>}
           </button>
-        ))}
-        <div style={{flex:1}}/>
-        <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 14px'}}>
-          <span style={{color:'#9a7d45',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
-          {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR</button>}
-          {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
-          {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
-          <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
-          <button style={{...btnG,fontSize:'15px',padding:'5px 10px',border:'1px solid #2a1800',color:'#cdac72'}} onClick={()=>{setAccForm({atual:'',nova:'',confirma:''});setShowAccount(true);}}>⚙ MINHA CONTA</button>
-          <button style={{...btnG,fontSize:'16px',padding:'5px 10px'}} onClick={doLogout}>SAIR</button>
+        </header>
+      ):(
+        /* DESKTOP: barra de abas completa */
+        <header className="tab-bar" style={{background:`linear-gradient(to bottom,#1a1000,#0d0800)`,borderBottom:`3px solid ${G}`,display:'flex',alignItems:'stretch',height:'54px',position:'sticky',top:0,zIndex:100,boxShadow:`0 4px 20px rgba(0,0,0,.9)`}}>
+          <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'11px',color:G,textShadow:`2px 2px 0 #664400,0 0 20px ${G}44`,padding:'0 18px',display:'flex',alignItems:'center',borderRight:`2px solid #2a1800`,gap:'8px',flexShrink:0}}>
+            <span style={{fontSize:'18px'}}>🏆</span> TURVA TRADER
+          </div>
+          {tabs.map(([id,label])=>(
+            <button key={id} className={`tab-btn ${tab===id?'tab-a':'tab-i'}`}
+              style={{padding:'0 16px',fontSize:'12px',fontFamily:"'Press Start 2P',monospace",cursor:'pointer',border:'none',borderRight:`1px solid #1a1000`,borderBottom:'3px solid transparent',transition:'all .15s',background:'transparent',color:'#9a7d45',letterSpacing:'.3px',...(id==='mod'&&pendingTrades.length>0?{color:'#ff6b6b'}:{})}}
+              onClick={()=>setTab(id)}>
+              {label}{id==='mod'&&pendingTrades.length>0&&<span style={{marginLeft:'6px',background:'#f44',color:'#fff',padding:'0 5px',fontSize:'12px',fontFamily:"'VT323',monospace"}}>{pendingTrades.length}</span>}
+            </button>
+          ))}
+          <div style={{flex:1}}/>
+          <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 14px'}}>
+            <span style={{color:'#9a7d45',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
+            {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR</button>}
+            {tab==='mercado'&&<button style={{...btnD,fontSize:'16px',padding:'5px 12px',background:'#1a1000',border:'1px solid #9400d3',color:'#c98fff'}} onClick={()=>{setTrF(eTroca);setShowTroca(true);}}>🔄 TROCA</button>}
+            {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
+            {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
+            <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
+            <button style={{...btnG,fontSize:'15px',padding:'5px 10px',border:'1px solid #2a1800',color:'#cdac72'}} onClick={()=>{setAccForm({atual:'',nova:'',confirma:''});setShowAccount(true);}}>⚙ MINHA CONTA</button>
+            <button style={{...btnG,fontSize:'16px',padding:'5px 10px'}} onClick={doLogout}>SAIR</button>
+          </div>
+        </header>
+      )}
+
+      {/* ── Drawer mobile (menu hambúrguer) ── */}
+      {isMobile&&menuOpen&&(
+        <div style={{position:'fixed',inset:0,zIndex:250}}>
+          <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.6)'}} onClick={()=>setMenuOpen(false)}/>
+          <div style={{position:'absolute',top:0,right:0,height:'100%',width:'250px',maxWidth:'80vw',background:BG2,borderLeft:`2px solid ${G}`,boxShadow:'-8px 0 30px rgba(0,0,0,0.7)',display:'flex',flexDirection:'column',overflow:'auto',animation:'sd .25s ease'}}>
+            <div style={{padding:'14px',borderBottom:`1px solid #2a1800`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{color:'#cdac72',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
+              <span style={{color:'#9a7d45',fontSize:'22px',cursor:'pointer',lineHeight:1}} onClick={()=>setMenuOpen(false)}>✕</span>
+            </div>
+            <div style={{padding:'8px 0',borderBottom:`1px solid #2a1800`}}>
+              <div style={{color:'#9a7d45',fontSize:'12px',padding:'4px 14px',letterSpacing:'1px',fontFamily:"'Press Start 2P',monospace"}}>NAVEGAÇÃO</div>
+              {tabs.map(([id,label])=>(
+                <div key={id} onClick={()=>{setTab(id);setMenuOpen(false);}} style={{padding:'13px 14px',color:tab===id?G:'#cdac72',fontSize:'17px',background:tab===id?'#1a1000':'transparent',borderLeft:`3px solid ${tab===id?G:'transparent'}`,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span>{label}</span>
+                  {id==='mod'&&pendingTrades.length>0&&<span style={{background:'#f44',color:'#fff',padding:'0 6px',fontSize:'13px'}}>{pendingTrades.length}</span>}
+                </div>
+              ))}
+            </div>
+            <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:'9px'}}>
+              <div style={{color:'#9a7d45',fontSize:'12px',letterSpacing:'1px',fontFamily:"'Press Start 2P',monospace",marginBottom:'2px'}}>AÇÕES</div>
+              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});setMenuOpen(false);}}>+ REGISTRAR</button>}
+              {tab==='mercado'&&<button style={{...btnD,textAlign:'center',fontSize:'16px',background:'#1a1000',border:'1px solid #9400d3',color:'#c98fff'}} onClick={()=>{setTrF(eTroca);setShowTroca(true);setMenuOpen(false);}}>🔄 REGISTRAR TROCA</button>}
+              {tab==='painel'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowOM(true);setMenuOpen(false);}}>+ OPERAÇÃO</button>}
+              {tab==='negocios'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);setMenuOpen(false);}}>+ NOVA ORDEM</button>}
+              <button style={{...btnD,textAlign:'center',fontSize:'16px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);setMenuOpen(false);}}>? TUTORIAL</button>
+              <button style={{...btnG,textAlign:'center',fontSize:'16px',border:'1px solid #2a1800',color:'#cdac72'}} onClick={()=>{setAccForm({atual:'',nova:'',confirma:''});setShowAccount(true);setMenuOpen(false);}}>⚙ MINHA CONTA</button>
+              <button style={{...btnG,textAlign:'center',fontSize:'16px'}} onClick={()=>{setMenuOpen(false);doLogout();}}>SAIR</button>
+            </div>
+          </div>
         </div>
-      </header>
+      )}
       <Flash msg={msg}/>
 
       {/* ══ TUTORIAL OVERLAY ══ */}
@@ -759,16 +879,54 @@ export default function App(){
           <div style={{flex:1,overflow:'auto',padding:'18px',background:'#090600'}}>
             {!selRaro?(
               <div>
-                <div style={{...secHdr,gap:'12px'}}>
-                  <span>◆ {sortedURaros.length} RAROS — clique nas colunas para ordenar</span>
-                  <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
-                    <input className="inp" style={{...inp,width:'180px',padding:'4px 10px',fontSize:'16px'}} placeholder="🔍 buscar raro..." value={search} onChange={e=>setSearch(e.target.value)}/>
+                <div style={{...secHdr,gap:'12px',flexWrap:'wrap'}}>
+                  <span>◆ {sortedURaros.length} RAROS{!isMobile&&' — clique nas colunas para ordenar'}</span>
+                  <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+                    {isMobile&&(
+                      <select className="inp" style={{...inp,padding:'4px 8px',fontSize:'15px'}} value={mSort+'|'+mSortDir} onChange={e=>{const[s,d]=e.target.value.split('|');setMSort(s);setMSortDir(d);}}>
+                        <option value="lastDate|desc">Mais recentes</option>
+                        <option value="avgPrice|desc">Maior preço médio</option>
+                        <option value="avgPrice|asc">Menor preço médio</option>
+                        <option value="count|desc">Mais negociados</option>
+                        <option value="raro|asc">Nome (A-Z)</option>
+                      </select>
+                    )}
+                    <input className="inp" style={{...inp,width:isMobile?'140px':'180px',padding:'4px 10px',fontSize:'16px'}} placeholder="🔍 buscar raro..." value={search} onChange={e=>setSearch(e.target.value)}/>
                     {(mSort!=='lastDate'||mSortDir!=='desc'||search)&&(
                       <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#cdac72',borderColor:'#664400'}} onClick={()=>{setMSort('lastDate');setMSortDir('desc');setSearch('');}}>✕ limpar</button>
                     )}
                   </div>
                 </div>
-                <div style={{...card,overflowX:'auto',padding:0}}>
+                {isMobile?(
+                  /* MOBILE: cards verticais com todas as infos */
+                  <div>
+                    {mItems.map((item)=>{
+                      const cat=rarities.find(r=>r.raro===item.raro);
+                      return(
+                        <div key={item.raro} style={{background:BG2,border:'1px solid #2a1800',borderLeft:`3px solid ${G}`,padding:'10px',marginBottom:'9px'}} onClick={()=>setSelRaro(item.raro)}>
+                          <div style={{display:'flex',alignItems:'center',gap:'9px',marginBottom:'9px'}}>
+                            <Img url={cat?.imagem_url} alt={item.raro} size={42}/>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{color:G,fontSize:'17px',fontWeight:'bold',marginBottom:'4px'}}>{item.raro}</div>
+                              <Badge cat={item.categoria}/>
+                            </div>
+                            <button style={{...btnD,padding:'4px 10px',fontSize:'16px',flexShrink:0}} onClick={e=>{e.stopPropagation();setQuickRaro(item.raro);}}>ℹ</button>
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'7px',borderTop:'1px solid #1a1000',paddingTop:'9px'}}>
+                            <div><div style={{color:'#9a7d45',fontSize:'12px'}}>MÉDIA 20 UN</div><div style={{color:item.count?G:'#3a2a10',fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{item.count?`${item.avgPrice}c`:'—'} {item.count&&item.trend!==0?<span style={{color:item.trend>0?'#69db7c':'#f66',fontSize:'11px'}}>{item.trend>0?'▲':'▼'}</span>:''}</div></div>
+                            <div><div style={{color:'#9a7d45',fontSize:'12px'}}>ÚLTIMO</div><div style={{color:'#cdac72',fontSize:'17px'}}>{item.count?`${item.lastPrice}c`:'—'}</div></div>
+                            <div><div style={{color:'#9a7d45',fontSize:'12px'}}>UNID. VENDIDAS</div><div style={{color:'#b89545',fontSize:'17px'}}>{item.count}</div></div>
+                            <div><div style={{color:'#9a7d45',fontSize:'12px'}}>ÚLTIMA NEG.</div><div style={{color:'#cdac72',fontSize:'17px'}}>{item.lastDate?fmtDate(item.lastDate):'—'}</div></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!sortedURaros.length&&<div style={{textAlign:'center',color:'#2a1800',padding:'56px'}}>{search?'Nenhum raro encontrado.':'Nenhum raro cadastrado.'}</div>}
+                    <Paginator page={mPage} setPage={setMPage} total={sortedURaros.length} isMobile={isMobile}/>
+                  </div>
+                ):(
+                  /* DESKTOP: tabela */
+                  <div style={{...card,overflowX:'auto',padding:0}}>
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
                     <thead><tr>
                       <th style={th}></th>
@@ -799,7 +957,8 @@ export default function App(){
                     </tbody>
                   </table>
                   <Paginator page={mPage} setPage={setMPage} total={sortedURaros.length} isMobile={isMobile}/>
-                </div>
+                  </div>
+                )}
               </div>
             ):(
               <div className="anim">
@@ -882,13 +1041,13 @@ export default function App(){
                           {!selTrades.length&&<tr><td colSpan={7} style={{...td,textAlign:'center',color:'#2a1800',padding:'32px'}}>Sem negociações.</td></tr>}
                           {selTrades.map((t,i)=>(
                             <tr key={t.id} className="rrow" style={{background:i%2===0?'#0d0800':'#0a0600'}}>
-                              <td style={{...td,color:'#b08f4f'}}>{fmtDate(t.data)}</td>
+                              <td style={{...td,color:'#b08f4f'}}>{t.trocaInfo&&<span title={t.trocaInfo} style={{marginRight:'5px'}}>🔄</span>}{fmtDate(t.data)}</td>
                               <td style={{...td,color:'#bd9a5a'}}>{t.quantidade}</td>
                               <td style={{...td,color:'#cdac72'}}>{t.precoVenda}c</td>
                               <td style={{...td,color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{t.precoPorUnidade}c</td>
                               <td style={{...td,color:'#7bb8ff'}}>{t.vendedor}</td>
                               <td style={{...td,color:'#7dffaa'}}>{t.comprador}</td>
-                              <td style={{...td,color:'#9a7d45',fontSize:'15px'}}>{t.lancadoPor||'—'}</td>
+                              <td style={{...td,color:'#9a7d45',fontSize:'15px'}}>{t.trocaInfo?<span title={t.trocaInfo} style={{color:'#c98fff'}}>🔄 troca</span>:(t.lancadoPor||'—')}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1411,6 +1570,79 @@ export default function App(){
           <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doAddTrade} disabled={loading}>{loading?'SALVANDO...':'✓ SALVAR'}</button>
           <button style={btnG} onClick={()=>setShowTM(false)}>CANCELAR</button>
         </div>
+      </Modal>
+
+      {/* Registrar Troca (escambo) */}
+      <Modal show={showTroca} onClose={()=>setShowTroca(false)} title="🔄 REGISTRAR TROCA" width="560px">
+        <Flash msg={msg}/>
+        {trF&&(()=>{
+          const av=avaliarTroca(trF);
+          const renderLado=(lado,key,titulo,cor)=>(
+            <div style={{background:'#0d0800',border:`1px solid ${cor}44`,borderLeft:`3px solid ${cor}`,padding:'12px',marginBottom:'10px'}}>
+              <div style={{color:cor,fontSize:'14px',marginBottom:'8px',fontFamily:"'Press Start 2P'",fontSize:'9px',letterSpacing:'1px'}}>{titulo}</div>
+              {trF[key].map((item,idx)=>{
+                const u=uRaros.find(r=>r.raro===item.raro);
+                return(
+                  <div key={idx} style={{display:'flex',gap:'6px',marginBottom:'7px',alignItems:'center'}}>
+                    <input className="inp" list="raros-list" style={{...inp,flex:1,padding:'6px 9px',fontSize:'15px'}} placeholder="nome do raro" value={item.raro} onChange={e=>{const n=[...trF[key]];n[idx]={...n[idx],raro:e.target.value};setTrF({...trF,[key]:n});}}/>
+                    <input className="inp" type="number" min="1" style={{...inp,width:'58px',padding:'6px',fontSize:'15px',textAlign:'center'}} value={item.qtd} onChange={e=>{const n=[...trF[key]];n[idx]={...n[idx],qtd:e.target.value};setTrF({...trF,[key]:n});}}/>
+                    {trF[key].length>1&&<button style={{background:'transparent',border:'none',color:'#f66',cursor:'pointer',fontSize:'18px',padding:'0 4px'}} onClick={()=>{const n=trF[key].filter((_,i)=>i!==idx);setTrF({...trF,[key]:n});}}>✕</button>}
+                  </div>
+                );
+              })}
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'4px'}}>
+                <button style={{background:'transparent',border:`1px dashed ${cor}66`,color:cor,cursor:'pointer',fontSize:'14px',padding:'4px 10px',fontFamily:"'VT323',monospace"}} onClick={()=>setTrF({...trF,[key]:[...trF[key],{raro:'',qtd:1}]})}>+ adicionar raro</button>
+                {(()=>{const side=key==='ladoA'?av?.A:av?.B;return side?.temPreco?<span style={{color:'#9a7d45',fontSize:'13px'}}>≈ {side.valor}c em mercado</span>:side?.itens.length?<span style={{color:'#9400d3',fontSize:'13px'}}>sem preço de mercado</span>:null;})()}
+              </div>
+            </div>
+          );
+          return(
+            <div>
+              <datalist id="raros-list">{rarities.map(r=><option key={r.raro} value={r.raro}/>)}</datalist>
+              <div style={{color:'#c9a85f',fontSize:'15px',marginBottom:'14px'}}>Informe os raros de cada lado. O sistema calcula os preços automaticamente usando o lado mais negociado como referência.</div>
+
+              {renderLado(trF.ladoA,'ladoA','LADO A — O QUE SAIU','#7bb8ff')}
+              <div style={{textAlign:'center',color:'#9400d3',fontSize:'22px',margin:'2px 0 8px'}}>🔄</div>
+              {renderLado(trF.ladoB,'ladoB','LADO B — O QUE ENTROU','#69db7c')}
+
+              {/* Resultado da avaliação */}
+              {av?.valido&&(
+                <div style={{background:'#130f0a',border:`1px solid ${G}55`,padding:'12px 14px',marginBottom:'14px'}}>
+                  {av.manual?(
+                    <div>
+                      <div style={{color:'#ffa94d',fontSize:'15px',marginBottom:'8px'}}>⚠ Nenhum dos raros tem preço de mercado ainda. Informe o valor total estimado desta troca (uma vez só):</div>
+                      <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+                        <input className="inp" type="number" min="0" style={{...inp,width:'140px'}} placeholder="valor total (c)" value={trF.valorManual} onChange={e=>setTrF({...trF,valorManual:e.target.value})}/>
+                        <span style={{color:'#9a7d45',fontSize:'14px'}}>moedas no total da troca</span>
+                      </div>
+                    </div>
+                  ):(
+                    <div>
+                      <div style={{color:'#9a7d45',fontSize:'13px',marginBottom:'4px'}}>Lado âncora: <span style={{color:G}}>{av.ancora==='A'?'A (o que saiu)':'B (o que entrou)'}</span> · mais negociado, define o valor</div>
+                      <div style={{color:G,fontSize:'20px',fontFamily:"'Press Start 2P'",fontSize:'13px'}}>Valor da troca: {av.V}c</div>
+                      <div style={{marginTop:'8px'}}>
+                        <label style={{...lbl,fontSize:'13px'}}>Ajustar valor (opcional, se foi um negócio fora da curva):</label>
+                        <input className="inp" type="number" min="0" style={{...inp,width:'140px'}} placeholder={`${av.V}`} value={trF.valorManual} onChange={e=>setTrF({...trF,valorManual:e.target.value})}/>
+                        <span style={{color:'#9a7d45',fontSize:'13px',marginLeft:'8px'}}>{trF.valorManual?'usando valor ajustado':'deixe vazio p/ usar o sugerido'}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
+                <div><label style={lbl}>JOGADOR A (saiu os raros) *</label><input className="inp" style={inp} placeholder="nick" value={trF.jogadorA} onChange={e=>setTrF({...trF,jogadorA:e.target.value})}/></div>
+                <div><label style={lbl}>JOGADOR B (recebeu) *</label><input className="inp" style={inp} placeholder="nick" value={trF.jogadorB} onChange={e=>setTrF({...trF,jogadorB:e.target.value})}/></div>
+              </div>
+              <div style={{marginBottom:'18px'}}><label style={lbl}>DATA *</label><input className="inp" style={{...inp,maxWidth:'200px'}} type="date" value={trF.data} onChange={e=>setTrF({...trF,data:e.target.value})}/></div>
+
+              <div style={{display:'flex',gap:'10px'}}>
+                <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={()=>{const ov=trF.valorManual;const merged={...trF};if(!av.manual&&ov)merged.valorManual=ov;setTrF(merged);doAddTroca();}} disabled={loading}>{loading?'SALVANDO...':'✓ REGISTRAR TROCA'}</button>
+                <button style={btnG} onClick={()=>setShowTroca(false)}>CANCELAR</button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* Registrar Operação */}
