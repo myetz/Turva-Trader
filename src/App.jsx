@@ -140,7 +140,7 @@ export default function App(){
   const PAGE=15;
   const today=new Date().toISOString().split('T')[0];
   const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],moedasA:'',moedasB:'',valorManual:'',data:today,jogadorA:'',jogadorB:''};
-  const eT={raro:'',quantidade:1,categoria:'Raro Exclusivo',priceMode:'total',precoVenda:'',precoPorUnidade:'',data:today,vendedor:'',comprador:''};
+  const eT={raro:'',quantidade:1,categoria:'Raro Exclusivo',priceMode:'total',precoVenda:'',precoPorUnidade:'',precoBarras:'',data:today,vendedor:'',comprador:''};
   const eO={raro:'',quantidade:1,tipo:'compra',precoTotal:'',precoPorUnidade:'',data:today,priceMode:'total'};
   const eOrder={tipo:'compra',items:[{raro:'',quantidade:1,preco:''}],observacao:''};
   const [tF,setTF]=useState(eT);
@@ -185,7 +185,7 @@ export default function App(){
     `;
     document.head.appendChild(s);
     const su=localStorage.getItem('tt-user');
-    if(su){const u=JSON.parse(su);setUser(u);loadAll(u.username);setScreen('dashboard');}
+    if(su){const u=JSON.parse(su);setUser(u);loadAll(u.username);setScreen('dashboard');logAccess(u.username);}
     else setScreen('login');
     const onResize=()=>setIsMobile(window.innerWidth<768);
     window.addEventListener('resize',onResize);
@@ -366,13 +366,16 @@ export default function App(){
   function doLogout(){setUser(null);setSelRaro(null);setTrades([]);setPortfolio([]);setRarities([]);setOrders([]);setMessages([]);localStorage.removeItem('tt-user');setScreen('login');}
 
   // ── Trades ─────────────────────────────────────────────────────────
+  // Conversão de barras: 1 barra = 50c
+  const BARRA=50;
   async function doAddTrade(){
-    const priceVal=tF.priceMode==='total'?tF.precoVenda:tF.precoPorUnidade;
+    const priceVal=tF.priceMode==='total'?tF.precoVenda:tF.priceMode==='unit'?tF.precoPorUnidade:tF.precoBarras;
     if(!tF.raro.trim()||!priceVal||!tF.vendedor.trim()||!tF.comprador.trim()||!tF.data){flash('Preencha todos os campos (*).','error');return;}
     const qtd=Math.max(1,parseInt(tF.quantidade)||1);
     let pv,ppu;
     if(tF.priceMode==='total'){pv=parseFloat(tF.precoVenda);ppu=Math.round(pv/qtd);}
-    else{ppu=parseFloat(tF.precoPorUnidade);pv=ppu*qtd;}
+    else if(tF.priceMode==='unit'){ppu=parseFloat(tF.precoPorUnidade);pv=ppu*qtd;}
+    else{const barras=parseFloat(tF.precoBarras);pv=Math.round(barras*BARRA);ppu=Math.round(pv/qtd);}
     if(isNaN(pv)||pv<0){flash('Preço inválido.','error');return;}
     setLoading(true);
     const {error}=await supabase.from('trades').insert({raro:tF.raro.trim(),quantidade:qtd,categoria:tF.categoria,preco_venda:pv,preco_por_unidade:ppu,data:tF.data,vendedor:tF.vendedor.trim(),comprador:tF.comprador.trim(),lancado_por:user.username,status:user.is_admin?'approved':'pending'});
@@ -542,6 +545,7 @@ export default function App(){
     const qtd=Math.max(1,parseInt(editingTrade.quantidade)||1);
     let pv,ppu;
     if(editingTrade.priceMode==='unit'){ppu=parseFloat(editingTrade.precoPorUnidade);pv=Math.round(ppu*qtd);}
+    else if(editingTrade.priceMode==='barra'){const b=parseFloat(editingTrade.precoBarras);pv=Math.round(b*BARRA);ppu=Math.round(pv/qtd);}
     else{pv=parseFloat(editingTrade.precoVenda);ppu=Math.round(pv/qtd);}
     if(isNaN(pv)||pv<0){flash('Preço inválido.','error');return;}
     setLoading(true);
@@ -578,16 +582,15 @@ export default function App(){
     return Object.values(map).map(r=>{
       if(!r.items.length)return{...r,lastDate:null,avgPrice:0,lastPrice:0,count:0,trend:0};
       const s=[...r.items].sort((a,b)=>b.data.localeCompare(a.data));
-      // Total de unidades vendidas (não número de negociações)
+      // Total de unidades vendidas (mostrado na coluna UNID.)
       const totalUnits=r.items.reduce((acc,t)=>acc+Math.max(1,t.quantidade||1),0);
-      // Média das últimas 20 unidades
-      const last20=getLastNUnits(s,20);
-      const avg20=calcAvg(last20);
-      // Tendência: últimas 20 vs 20 anteriores
-      const last40=getLastNUnits(s,40);
-      const prev20=last40.slice(20);
-      const trend=prev20.length?calcAvg(last20)-calcAvg(prev20):0;
-      return{...r,lastDate:s[0].data,avgPrice:avg20,lastPrice:s[0].precoPorUnidade,count:totalUnits,trend};
+      // Média das últimas 3 negociações (independente de quantidade)
+      const last3=s.slice(0,3).map(t=>t.precoPorUnidade);
+      const avg3=calcAvg(last3);
+      // Tendência: últimas 3 negociações vs 3 anteriores
+      const prev3=s.slice(3,6).map(t=>t.precoPorUnidade);
+      const trend=prev3.length?calcAvg(last3)-calcAvg(prev3):0;
+      return{...r,lastDate:s[0].data,avgPrice:avg3,lastPrice:s[0].precoPorUnidade,count:totalUnits,trend};
     }).sort((a,b)=>{if(a.lastDate&&!b.lastDate)return -1;if(!a.lastDate&&b.lastDate)return 1;if(a.lastDate&&b.lastDate)return b.lastDate.localeCompare(a.lastDate);return a.raro.localeCompare(b.raro);});
   },[trades,rarities]);
 
@@ -819,7 +822,7 @@ export default function App(){
           <div style={{flex:1}}/>
           <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'0 14px'}}>
             <span style={{color:'#9a7d45',fontSize:'16px'}}>◈ <span style={{color:G}}>{user?.username}</span></span>
-            {tab==='mercado'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setConvertingId(null);setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);}}>+ REGISTRAR</button>}
+            {tab==='mercado'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR</button>}
             {tab==='painel'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>setShowOM(true)}>+ OPERAÇÃO</button>}
             {tab==='negocios'&&<button style={{...btnY,fontSize:'16px',padding:'5px 12px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);}}>+ NOVA ORDEM</button>}
             <button style={{...btnD,fontSize:'15px',padding:'5px 12px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);}}>? TUTORIAL</button>
@@ -852,7 +855,7 @@ export default function App(){
             </div>
             <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:'9px'}}>
               <div style={{color:'#9a7d45',fontSize:'12px',letterSpacing:'1px',fontFamily:"'Press Start 2P',monospace",marginBottom:'2px'}}>AÇÕES</div>
-              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setConvertingId(null);setTrF({...eTroca,ladoA:[{raro:selRaro||'',qtd:1}]});setShowTroca(true);setMenuOpen(false);}}>+ REGISTRAR NEGOCIAÇÃO</button>}
+              {tab==='mercado'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro||'',categoria:selInfo?.categoria||'Raro Exclusivo'});setMenuOpen(false);}}>+ REGISTRAR</button>}
               {tab==='painel'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setShowOM(true);setMenuOpen(false);}}>+ OPERAÇÃO</button>}
               {tab==='negocios'&&<button style={{...btnY,textAlign:'center',fontSize:'17px'}} onClick={()=>{setEditingOrder(null);setOrderForm(eOrder);setShowOrderModal(true);setMenuOpen(false);}}>+ NOVA ORDEM</button>}
               <button style={{...btnD,textAlign:'center',fontSize:'16px',background:'#1a1000',border:`1px solid ${G}`,color:G}} onClick={()=>{setTutorialStep(0);setShowTutorialOverlay(true);setMenuOpen(false);}}>? TUTORIAL</button>
@@ -964,7 +967,7 @@ export default function App(){
                   <table style={{width:'100%',borderCollapse:'collapse',fontSize:'17px'}}>
                     <thead><tr>
                       <th style={th}></th>
-                      {[['RARO','raro'],['CATEGORIA','categoria'],['MÉDIA 20 UN','avgPrice'],['ÚLTIMO','lastPrice'],['UNID.','count'],['ÚLTIMA NEG.','lastDate']].map(([label,col])=>(
+                      {[['RARO','raro'],['CATEGORIA','categoria'],['MÉDIA ÚLT. 3','avgPrice'],['ÚLTIMO','lastPrice'],['UNID.','count'],['ÚLTIMA NEG.','lastDate']].map(([label,col])=>(
                         <th key={col} style={{...th,cursor:'pointer',userSelect:'none'}} onClick={()=>mColClick(col)}>
                           {label}{mSort===col?<span style={{marginLeft:'4px',color:G}}>{mSortDir==='desc'?'▼':'▲'}</span>:<span style={{marginLeft:'4px',color:'#7a6035',fontSize:'9px'}}>⇅</span>}
                         </th>
@@ -1002,7 +1005,7 @@ export default function App(){
                     <div style={{fontFamily:"'Press Start 2P'",fontSize:'14px',color:G,marginBottom:'8px',textShadow:`2px 2px 0 #443300`}}>{selRaro}</div>
                     <Badge cat={selInfo?.categoria||''}/>
                   </div>
-                  <button style={{...btnY,padding:'7px 14px',fontSize:'17px'}} onClick={()=>{setConvertingId(null);setTrF({...eTroca,ladoA:[{raro:selRaro,qtd:1}]});setShowTroca(true);}}>+ REGISTRAR NEG.</button>
+                  <button style={{...btnY,padding:'7px 14px',fontSize:'17px'}} onClick={()=>{setShowTM(true);setTF({...eT,raro:selRaro,categoria:selInfo?.categoria||'Raro Exclusivo'});}}>+ REGISTRAR NEG.</button>
                 </div>
 
                 {selCatalog&&(
@@ -1018,7 +1021,7 @@ export default function App(){
                 )}
 
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'10px',marginBottom:'16px'}}>
-                  {[{l:'MÉDIA 20 UNID.',v:`${selInfo?.avgPrice||0}c`,hi:true},{l:'ÚLTIMO PREÇO',v:`${selInfo?.lastPrice||0}c`},{l:'UNID. VENDIDAS',v:String(selInfo?.count||0)},{l:'ÚLTIMA NEG.',v:fmtDate(selInfo?.lastDate)}].map(s=>(
+                  {[{l:'MÉDIA ÚLT. 3 NEG.',v:`${selInfo?.avgPrice||0}c`,hi:true},{l:'ÚLTIMO PREÇO',v:`${selInfo?.lastPrice||0}c`},{l:'UNID. VENDIDAS',v:String(selInfo?.count||0)},{l:'ÚLTIMA NEG.',v:fmtDate(selInfo?.lastDate)}].map(s=>(
                     <div key={s.l} style={{...card,padding:'12px',textAlign:'center',border:s.hi?`2px solid ${G}`:'1px solid #2a1800',boxShadow:s.hi?`3px 3px 0 #443300`:'3px 3px 12px rgba(0,0,0,.6)'}}>
                       <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'8px'}}>{s.l}</div>
                       <div style={{color:s.hi?G:'#aa8855',fontSize:'20px'}}>{s.v}</div>
@@ -1529,7 +1532,7 @@ export default function App(){
               <div style={{borderTop:`1px solid #1a1000`,paddingTop:'14px'}}>
                 <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:'#9a7d45',marginBottom:'10px',letterSpacing:'1px'}}>DADOS DE MERCADO</div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'10px'}}>
-                  {[{l:'MÉDIA 20 UNID.',v:`${quickInfo.avgPrice}c`,c:G},{l:'ÚLTIMO',v:`${quickInfo.lastPrice}c`,c:'#aa8855'},{l:'UNID. VENDIDAS',v:String(quickInfo.count),c:'#664400'}].map(s=>(
+                  {[{l:'MÉDIA ÚLT. 3 NEG.',v:`${quickInfo.avgPrice}c`,c:G},{l:'ÚLTIMO',v:`${quickInfo.lastPrice}c`,c:'#aa8855'},{l:'UNID. VENDIDAS',v:String(quickInfo.count),c:'#664400'}].map(s=>(
                     <div key={s.l} style={{...card,padding:'10px',textAlign:'center'}}>
                       <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'6px'}}>{s.l}</div>
                       <div style={{color:s.c,fontSize:'17px'}}>{s.v}</div>
@@ -1563,30 +1566,34 @@ export default function App(){
         {/* Price toggle */}
         <div style={{marginBottom:'13px'}}>
           <label style={lbl}>COMO DESEJA INFORMAR O PREÇO? *</label>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'10px'}}>
-            {[['total','💰 PREÇO TOTAL'],['unit','📦 PREÇO POR UNIDADE']].map(([v,l])=>(
-              <button key={v} style={{...btnD,textAlign:'center',fontSize:'17px',padding:'10px',background:tF.priceMode===v?G:BG3,color:tF.priceMode===v?'#000':G,border:`2px solid ${tF.priceMode===v?G2:'#2a1800'}`,transition:'all .15s',fontWeight:tF.priceMode===v?'bold':'normal'}} onClick={()=>setTF({...tF,priceMode:v})}>{l}</button>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'8px',marginBottom:'10px'}}>
+            {[['total','💰 TOTAL'],['unit','📦 POR UNIDADE'],['barra','🍫 EM BARRAS']].map(([v,l])=>(
+              <button key={v} style={{...btnD,textAlign:'center',fontSize:'15px',padding:'10px 4px',background:tF.priceMode===v?G:BG3,color:tF.priceMode===v?'#000':G,border:`2px solid ${tF.priceMode===v?G2:'#2a1800'}`,transition:'all .15s',fontWeight:tF.priceMode===v?'bold':'normal'}} onClick={()=>setTF({...tF,priceMode:v})}>{l}</button>
             ))}
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
             <div><label style={lbl}>QUANTIDADE *</label><input className="inp" style={inp} type="number" min="1" value={tF.quantidade} onChange={e=>setTF({...tF,quantidade:e.target.value})}/></div>
             <div>
-              <label style={lbl}>{tF.priceMode==='total'?'PREÇO TOTAL (c) *':'PREÇO POR UNIDADE (c) *'}</label>
-              {tF.priceMode==='total'
-                ?<input className="inp" style={inp} type="number" min="0" placeholder="ex: 850" value={tF.precoVenda} onChange={e=>setTF({...tF,precoVenda:e.target.value})}/>
-                :<input className="inp" style={inp} type="number" min="0" placeholder="ex: 425" value={tF.precoPorUnidade} onChange={e=>setTF({...tF,precoPorUnidade:e.target.value})}/>
-              }
+              <label style={lbl}>{tF.priceMode==='total'?'PREÇO TOTAL (c) *':tF.priceMode==='unit'?'PREÇO POR UNIDADE (c) *':'TOTAL EM BARRAS *'}</label>
+              {tF.priceMode==='total'&&<input className="inp" style={inp} type="number" min="0" placeholder="ex: 850" value={tF.precoVenda} onChange={e=>setTF({...tF,precoVenda:e.target.value})}/>}
+              {tF.priceMode==='unit'&&<input className="inp" style={inp} type="number" min="0" placeholder="ex: 425" value={tF.precoPorUnidade} onChange={e=>setTF({...tF,precoPorUnidade:e.target.value})}/>}
+              {tF.priceMode==='barra'&&<input className="inp" style={inp} type="number" min="0" step="0.5" placeholder="ex: 17" value={tF.precoBarras} onChange={e=>setTF({...tF,precoBarras:e.target.value})}/>}
             </div>
           </div>
         </div>
         {/* Preview */}
-        {(tF.precoVenda!==''||tF.precoPorUnidade!=='')&&parseInt(tF.quantidade)>=1&&(()=>{
+        {(tF.precoVenda!==''||tF.precoPorUnidade!==''||tF.precoBarras!=='')&&parseInt(tF.quantidade)>=1&&(()=>{
           const qtd=Math.max(1,parseInt(tF.quantidade)||1);
-          const pv=tF.priceMode==='total'?parseFloat(tF.precoVenda||0):parseFloat(tF.precoPorUnidade||0)*qtd;
-          const ppu=tF.priceMode==='unit'?parseFloat(tF.precoPorUnidade||0):Math.round(pv/qtd);
-          return<div style={{background:'#080500',border:`1px solid #2a1800`,padding:'8px 14px',marginBottom:'13px',fontSize:'16px',color:'#c9a85f',display:'flex',justifyContent:'space-between',gap:'16px'}}>
+          let pv;
+          if(tF.priceMode==='total')pv=parseFloat(tF.precoVenda||0);
+          else if(tF.priceMode==='unit')pv=parseFloat(tF.precoPorUnidade||0)*qtd;
+          else pv=parseFloat(tF.precoBarras||0)*BARRA;
+          const ppu=Math.round(pv/qtd);
+          const barras=pv/BARRA;
+          return<div style={{background:'#080500',border:`1px solid #2a1800`,padding:'8px 14px',marginBottom:'13px',fontSize:'15px',color:'#c9a85f',display:'flex',justifyContent:'space-between',gap:'10px',flexWrap:'wrap'}}>
             <span>Total: <span style={{color:'#cdac72'}}>{Math.round(pv)}c</span></span>
-            <span>Por unidade: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{ppu}c</span></span>
+            <span>Por unidade: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'11px'}}>{ppu}c</span></span>
+            <span>Em barras: <span style={{color:'#ffd700'}}>🍫 {barras%1===0?barras:barras.toFixed(1)}</span></span>
           </div>;
         })()}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
@@ -1772,20 +1779,27 @@ export default function App(){
           <div style={{marginBottom:'13px'}}><label style={lbl}>RARO *</label><input className="inp" style={inp} value={editingTrade.raro} onChange={e=>setEditingTrade({...editingTrade,raro:e.target.value})} list="rl-edit"/><datalist id="rl-edit">{uRaros.map(r=><option key={r.raro} value={r.raro}/>)}</datalist></div>
           <div style={{marginBottom:'13px'}}>
             <label style={lbl}>COMO REPRECIFICAR</label>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px'}}>
-              {[['total','💰 PREÇO TOTAL'],['unit','📊 POR UNIDADE']].map(([v,l])=>(
-                <button key={v} style={{...btnD,textAlign:'center',fontSize:'16px',background:editingTrade.priceMode===v?G:BG3,color:editingTrade.priceMode===v?'#000':G}} onClick={()=>setEditingTrade({...editingTrade,priceMode:v})}>{l}</button>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'8px'}}>
+              {[['total','💰 TOTAL'],['unit','📊 P/ UNIDADE'],['barra','🍫 BARRAS']].map(([v,l])=>(
+                <button key={v} style={{...btnD,textAlign:'center',fontSize:'14px',padding:'8px 4px',background:editingTrade.priceMode===v?G:BG3,color:editingTrade.priceMode===v?'#000':G}} onClick={()=>setEditingTrade({...editingTrade,priceMode:v})}>{l}</button>
               ))}
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
             <div><label style={lbl}>QUANTIDADE *</label><input className="inp" style={inp} type="number" min="1" value={editingTrade.quantidade} onChange={e=>setEditingTrade({...editingTrade,quantidade:e.target.value})}/></div>
-            {editingTrade.priceMode==='unit'
-              ?<div><label style={lbl}>PREÇO POR UNIDADE (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoPorUnidade} onChange={e=>setEditingTrade({...editingTrade,precoPorUnidade:e.target.value})}/></div>
-              :<div><label style={lbl}>PREÇO TOTAL (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoVenda} onChange={e=>setEditingTrade({...editingTrade,precoVenda:e.target.value})}/></div>
-            }
+            {editingTrade.priceMode==='unit'&&<div><label style={lbl}>PREÇO POR UNIDADE (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoPorUnidade} onChange={e=>setEditingTrade({...editingTrade,precoPorUnidade:e.target.value})}/></div>}
+            {editingTrade.priceMode==='barra'&&<div><label style={lbl}>TOTAL EM BARRAS *</label><input className="inp" style={inp} type="number" min="0" step="0.5" placeholder="ex: 17" value={editingTrade.precoBarras||''} onChange={e=>setEditingTrade({...editingTrade,precoBarras:e.target.value})}/></div>}
+            {editingTrade.priceMode!=='unit'&&editingTrade.priceMode!=='barra'&&<div><label style={lbl}>PREÇO TOTAL (c) *</label><input className="inp" style={inp} type="number" min="0" value={editingTrade.precoVenda} onChange={e=>setEditingTrade({...editingTrade,precoVenda:e.target.value})}/></div>}
           </div>
-          <div style={{color:'#9a7d45',fontSize:'14px',marginBottom:'13px'}}>{editingTrade.priceMode==='unit'?`Total: ${Math.round((parseFloat(editingTrade.precoPorUnidade)||0)*(parseInt(editingTrade.quantidade)||1))}c`:`Por unidade: ${Math.round((parseFloat(editingTrade.precoVenda)||0)/(parseInt(editingTrade.quantidade)||1))}c`}</div>
+          {(()=>{
+            const q=parseInt(editingTrade.quantidade)||1;
+            let pv=0;
+            if(editingTrade.priceMode==='unit')pv=(parseFloat(editingTrade.precoPorUnidade)||0)*q;
+            else if(editingTrade.priceMode==='barra')pv=(parseFloat(editingTrade.precoBarras)||0)*BARRA;
+            else pv=parseFloat(editingTrade.precoVenda)||0;
+            const ppu=Math.round(pv/q),barras=pv/BARRA;
+            return <div style={{color:'#9a7d45',fontSize:'14px',marginBottom:'13px',display:'flex',gap:'12px',flexWrap:'wrap'}}><span>Total: <b style={{color:'#cdac72'}}>{Math.round(pv)}c</b></span><span>P/ un.: <b style={{color:G}}>{ppu}c</b></span><span>Barras: <b style={{color:'#ffd700'}}>🍫 {barras%1===0?barras:barras.toFixed(1)}</b></span></div>;
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'13px'}}>
             <div><label style={lbl}>VENDEDOR *</label><input className="inp" style={inp} value={editingTrade.vendedor} onChange={e=>setEditingTrade({...editingTrade,vendedor:e.target.value})}/></div>
             <div><label style={lbl}>COMPRADOR *</label><input className="inp" style={inp} value={editingTrade.comprador} onChange={e=>setEditingTrade({...editingTrade,comprador:e.target.value})}/></div>
@@ -1798,16 +1812,6 @@ export default function App(){
             <button style={{...btnY,flex:1,textAlign:'center',opacity:loading?0.6:1}} onClick={doEditTrade} disabled={loading}>{loading?'SALVANDO...':'✓ SALVAR'}</button>
             <button style={btnG} onClick={()=>{setShowEditModal(false);setEditingTrade(null);}}>CANCELAR</button>
           </div>
-          {!editingTrade.trocaInfo&&(
-            <div style={{marginTop:'14px',paddingTop:'14px',borderTop:'1px solid #2a1800'}}>
-              <div style={{color:'#9a7d45',fontSize:'14px',marginBottom:'8px'}}>Esta negociação foi na verdade uma troca de raro por raro? Converta para registrar os dois lados corretamente:</div>
-              <button style={{...btnD,width:'100%',textAlign:'center',fontSize:'16px',background:'#1a0a2a',border:'1px solid #9400d3',color:'#c98fff'}} onClick={()=>{
-                setConvertingId(editingTrade.id);
-                setTrF({...eTroca,ladoA:[{raro:editingTrade.raro,qtd:parseInt(editingTrade.quantidade)||1}],jogadorA:editingTrade.vendedor,jogadorB:editingTrade.comprador,data:editingTrade.data});
-                setShowEditModal(false);setEditingTrade(null);setShowTroca(true);
-              }}>🔄 CONVERTER EM TROCA</button>
-            </div>
-          )}
         </>}
       </Modal>
 
