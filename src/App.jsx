@@ -92,6 +92,7 @@ export default function App(){
   const [pSearch,setPSearch]=useState('');
   const [pSort,setPSort]=useState('raro');
   const [pSortDir,setPSortDir]=useState('asc');
+  const [pStatusFilter,setPStatusFilter]=useState('todos');
   // Orders
   const [orderFilter,setOrderFilter]=useState('todos');
   // Moderation
@@ -141,7 +142,7 @@ export default function App(){
   const today=new Date().toISOString().split('T')[0];
   const eTroca={ladoA:[{raro:'',qtd:1}],ladoB:[{raro:'',qtd:1}],moedasA:'',moedasB:'',valorManual:'',data:today,jogadorA:'',jogadorB:''};
   const eT={raro:'',quantidade:1,categoria:'Raro Exclusivo',priceMode:'total',precoVenda:'',precoPorUnidade:'',precoBarras:'',data:today,vendedor:'',comprador:''};
-  const eO={raro:'',quantidade:1,tipo:'compra',precoTotal:'',precoPorUnidade:'',data:today,priceMode:'total'};
+  const eO={raro:'',quantidade:1,tipo:'compra',precoTotal:'',precoPorUnidade:'',precoBarras:'',data:today,priceMode:'total'};
   const eOrder={tipo:'compra',items:[{raro:'',quantidade:1,preco:''}],observacao:''};
   const [tF,setTF]=useState(eT);
   const [oF,setOF]=useState(eO);
@@ -253,7 +254,7 @@ export default function App(){
       setAllUsers(usersR.data.filter(u=>comRegistro.has(u.username))); // só com registros (p/ painel)
     }
     // Carrega logs de acesso (últimos 2000)
-    const {data:logs}=await supabase.from('access_logs').select('*').order('created_at',{ascending:false}).limit(2000);
+    const {data:logs}=await supabase.from('access_logs').select('*').neq('username','Bot').order('created_at',{ascending:false}).limit(2000);
     if(logs)setAccessLogs(logs);
   }
 
@@ -479,7 +480,8 @@ export default function App(){
     const qtd=Math.max(1,parseInt(oF.quantidade)||1);
     let pt,ppu;
     if(oF.priceMode==='total'){pt=parseFloat(oF.precoTotal);ppu=pt>=0?Math.round(pt/qtd):0;}
-    else{ppu=parseFloat(oF.precoPorUnidade);pt=ppu*qtd;}
+    else if(oF.priceMode==='unit'){ppu=parseFloat(oF.precoPorUnidade);pt=ppu*qtd;}
+    else{const b=parseFloat(oF.precoBarras);pt=Math.round(b*BARRA);ppu=pt>=0?Math.round(pt/qtd):0;}
     if(!oF.raro.trim()||!oF.data){flash('Preencha todos os campos (*).','error');return;}
     if(isNaN(pt)||pt<0){flash('Preço inválido.','error');return;}
     setLoading(true);
@@ -494,7 +496,7 @@ export default function App(){
     if(!cat){flash('Raro não encontrado no catálogo.','error');return;}
     const pc=cat.preco_catalogo||0;
     const qtd=Math.max(1,parseInt(oF.quantidade)||1);
-    setOF({...oF,priceMode:'unit',precoPorUnidade:String(pc),precoTotal:String(pc*qtd)});
+    setOF({...oF,priceMode:'unit',precoPorUnidade:String(pc),precoTotal:String(pc*qtd),precoBarras:''});
     flash(pc===0?'Raro gratuito (0c).':`Preço do catálogo: ${pc}c/un`,'success');
   }
 
@@ -634,18 +636,43 @@ export default function App(){
       const mktPrice=uRaros.find(r=>r.raro===item.raro)?.avgPrice||0;
       const estoque=qC-qV;
       const mktValue=estoque*mktPrice;
-      return{raro:item.raro,comprados:qC,vendidos:qV,estoque,custo,investido:inv,vendido:rec,lucroMed:pMV-custo,lucro:Math.round(rec-(qV*custo)),mktPrice,mktValue};
+      // status: em andamento se ainda tem estoque, completo se zerou
+      const ativo=qC>0||qV>0;
+      const status=!ativo?'vazio':(estoque>0?'andamento':'completo');
+      // investido apenas no estoque parado (não no que já foi vendido)
+      const investidoEstoque=estoque*custo;
+      // lucro potencial das posições em andamento: mktValue - investidoEstoque
+      const lucroPotencial=mktValue-investidoEstoque;
+      return{raro:item.raro,comprados:qC,vendidos:qV,estoque,custo,investido:inv,vendido:rec,lucroMed:pMV-custo,lucro:Math.round(rec-(qV*custo)),mktPrice,mktValue,status,investidoEstoque,lucroPotencial};
     });
   },[portfolio,uRaros]);
 
   const filteredPStats=useMemo(()=>{
     let r=[...pStats];
+    if(pStatusFilter==='andamento')r=r.filter(i=>i.status==='andamento');
+    else if(pStatusFilter==='completo')r=r.filter(i=>i.status==='completo');
     if(pSearch)r=r.filter(i=>i.raro.toLowerCase().includes(pSearch.toLowerCase()));
     const numSort=(key)=>(a,b)=>pSortDir==='desc'?b[key]-a[key]:a[key]-b[key];
     const strSort=(a,b)=>pSortDir==='desc'?b.raro.localeCompare(a.raro):a.raro.localeCompare(b.raro);
     const sorts={raro:strSort,estoque:numSort('estoque'),investido:numSort('investido'),lucro:numSort('lucro'),comprados:numSort('comprados'),vendidos:numSort('vendidos'),vendido:numSort('vendido'),custo:numSort('custo'),mktValue:numSort('mktValue'),mktPrice:numSort('mktPrice')};
     return r.sort(sorts[pSort]||strSort);
-  },[pStats,pSearch,pSort,pSortDir]);
+  },[pStats,pSearch,pSort,pSortDir,pStatusFilter]);
+
+  // Totais SEPARADOS: em andamento (ainda em mão) vs completo (já negociado)
+  const totalsAndamento=useMemo(()=>{
+    const itens=pStats.filter(i=>i.status==='andamento');
+    const investido=itens.reduce((s,i)=>s+i.investidoEstoque,0);
+    const mkt=itens.reduce((s,i)=>s+i.mktValue,0);
+    return{count:itens.length,investido,mkt,lucroPotencial:mkt-investido,margem:investido>0?Math.round(((mkt-investido)/investido)*100):null};
+  },[pStats]);
+
+  const totalsCompleto=useMemo(()=>{
+    const itens=pStats.filter(i=>i.status==='completo');
+    const inv=itens.reduce((s,i)=>s+i.investido,0);
+    const rec=itens.reduce((s,i)=>s+i.vendido,0);
+    const lucro=itens.reduce((s,i)=>s+i.lucro,0);
+    return{count:itens.length,inv,rec,lucro,margem:inv>0?Math.round((lucro/inv)*100):null};
+  },[pStats]);
 
   const totals=useMemo(()=>{
     const inv=pStats.reduce((s,i)=>s+i.investido,0),rec=pStats.reduce((s,i)=>s+i.vendido,0),parado=pStats.reduce((s,i)=>s+(i.estoque*i.custo),0);
@@ -1106,28 +1133,57 @@ export default function App(){
             <div><div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'8px',color:G,marginBottom:'3px',letterSpacing:'1px'}}>MEU PAINEL</div><div style={{color:'#c9a85f',fontSize:'15px'}}>Registre compras e vendas e saiba seu patrimônio em raros. Acompanhe lucro/prejuízo, capital parado e taxa de acerto — um gerenciador de carteira completo!</div></div>
           </div>
           <div style={{overflow:'auto',flex:1,padding:'18px',paddingBottom:'100px',background:'#090600'}}>
-          <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(200px,1fr))',gap:'10px',marginBottom:'16px'}}>
-            {[
-              {l:'ESTOQUE PARADO',v:`${totals.parado}c`,sub:'custo médio × estoque',color:G},
-              {l:'BALANÇO TOTAL',v:`${totals.balanco>=0?'+':''}${totals.balanco}c`,sub:totals.balanco>0?'✓ lucro nas negociações':totals.balanco<0?'✕ prejuízo nas negociações':'sem movimentação',color:totals.balanco>0?'#69db7c':totals.balanco<0?'#f66':'#aa8855'},
-              {l:'VALOR DE MERCADO',v:totals.mktTotal?`${totals.mktTotal}c`:'—',sub:'estoque × média do mercado',color:'#ffa94d'},
-              {l:'MARGEM DE LUCRO',v:totals.margemGeral!==null?`${totals.margemGeral>=0?'+':''}${totals.margemGeral}%`:'—',sub:'ganho total sobre o investido',color:totals.margemGeral>=0?'#e599f7':'#ff8855'},
-            ].map(s=>(
-              <div key={s.l} style={{...card,padding:'14px 18px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
-                <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'8px',letterSpacing:'1px'}}>{s.l}</div>
-                <div style={{color:s.color,fontSize:'26px',marginBottom:'4px',fontWeight:'bold'}}>{s.v}</div>
-                <div style={{color:'#9a7d45',fontSize:'15px'}}>{s.sub}</div>
-              </div>
-            ))}
+
+          {/* GRUPO 1 — EM ANDAMENTO */}
+          <div style={{marginBottom:'14px'}}>
+            <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'9px',color:'#7bb8ff',marginBottom:'8px',letterSpacing:'1px'}}>🔄 EM ANDAMENTO — POSIÇÕES ABERTAS</div>
+            <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(180px,1fr))',gap:'10px'}}>
+              {[
+                {l:'RAROS EM MÃO',v:String(totalsAndamento.count),sub:'posições abertas',color:'#7bb8ff'},
+                {l:'INVESTIDO',v:`${totalsAndamento.investido}c`,sub:'custo do estoque parado',color:G},
+                {l:'VALOR DE MERCADO',v:totalsAndamento.mkt?`${totalsAndamento.mkt}c`:'—',sub:'estoque × média atual',color:'#ffa94d'},
+                {l:'LUCRO POTENCIAL',v:totalsAndamento.investido?`${totalsAndamento.lucroPotencial>=0?'+':''}${totalsAndamento.lucroPotencial}c${totalsAndamento.margem!==null?` (${totalsAndamento.margem>=0?'+':''}${totalsAndamento.margem}%)`:''}`:'—',sub:'se vender tudo pelo preço atual',color:totalsAndamento.lucroPotencial>=0?'#69db7c':'#f66'},
+              ].map(s=>(
+                <div key={s.l} style={{...card,padding:'12px 16px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
+                  <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'7px',letterSpacing:'1px'}}>{s.l}</div>
+                  <div style={{color:s.color,fontSize:'22px',marginBottom:'3px',fontWeight:'bold'}}>{s.v}</div>
+                  <div style={{color:'#9a7d45',fontSize:'14px'}}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* GRUPO 2 — COMPLETO */}
+          <div style={{marginBottom:'16px'}}>
+            <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:'9px',color:'#69db7c',marginBottom:'8px',letterSpacing:'1px'}}>✓ COMPLETAS — NEGOCIAÇÕES FECHADAS</div>
+            <div className="stat-grid" style={{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(auto-fit,minmax(180px,1fr))',gap:'10px'}}>
+              {[
+                {l:'RAROS FECHADOS',v:String(totalsCompleto.count),sub:'todo o estoque vendido',color:'#69db7c'},
+                {l:'TOTAL INVESTIDO',v:totalsCompleto.inv?`${totalsCompleto.inv}c`:'—',sub:'gasto comprando',color:'#7bb8ff'},
+                {l:'TOTAL RECEBIDO',v:totalsCompleto.rec?`${totalsCompleto.rec}c`:'—',sub:'recebido vendendo',color:'#ffa94d'},
+                {l:'LUCRO REALIZADO',v:totalsCompleto.count?`${totalsCompleto.lucro>=0?'+':''}${totalsCompleto.lucro}c${totalsCompleto.margem!==null?` (${totalsCompleto.margem>=0?'+':''}${totalsCompleto.margem}%)`:''}`:'—',sub:'ganho/prejuízo nas fechadas',color:totalsCompleto.lucro>=0?'#69db7c':'#f66'},
+              ].map(s=>(
+                <div key={s.l} style={{...card,padding:'12px 16px',border:`1px solid ${s.color}33`,boxShadow:`3px 3px 0 ${s.color}11`}}>
+                  <div style={{fontFamily:"'Press Start 2P'",fontSize:'7px',color:'#9a7d45',marginBottom:'7px',letterSpacing:'1px'}}>{s.l}</div>
+                  <div style={{color:s.color,fontSize:'22px',marginBottom:'3px',fontWeight:'bold'}}>{s.v}</div>
+                  <div style={{color:'#9a7d45',fontSize:'14px'}}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div style={{...card,padding:0}}>
             <div style={secHdr}>
               <span>◆ RESUMO POR RARO — {filteredPStats.length} itens</span>
-              <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+              <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+                <div style={{display:'flex',gap:'4px'}}>
+                  {[['todos','Todos'],['andamento','🔄 Em andamento'],['completo','✓ Completos']].map(([v,l])=>(
+                    <button key={v} style={{padding:'4px 10px',fontSize:'14px',background:pStatusFilter===v?G:BG3,color:pStatusFilter===v?'#000':G,border:`1px solid ${pStatusFilter===v?G2:'#2a1800'}`,cursor:'pointer',fontFamily:"'VT323',monospace"}} onClick={()=>setPStatusFilter(v)}>{l}</button>
+                  ))}
+                </div>
                 <input className="inp" style={{...inp,width:'130px',padding:'4px 10px',fontSize:'16px'}} placeholder="buscar..." value={pSearch} onChange={e=>setPSearch(e.target.value)}/>
-                {(pSort!=='raro'||pSortDir!=='asc'||pSearch)&&(
-                  <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#cdac72',borderColor:'#664400'}} onClick={()=>{setPSort('raro');setPSortDir('asc');setPSearch('');}}>✕ limpar</button>
+                {(pSort!=='raro'||pSortDir!=='asc'||pSearch||pStatusFilter!=='todos')&&(
+                  <button style={{...btnG,fontSize:'15px',padding:'4px 10px',color:'#cdac72',borderColor:'#664400'}} onClick={()=>{setPSort('raro');setPSortDir('asc');setPSearch('');setPStatusFilter('todos');}}>✕ limpar</button>
                 )}
               </div>
             </div>
@@ -1148,7 +1204,7 @@ export default function App(){
                     return(
                     <tr key={item.raro} style={{background:i%2===0?'#0d0800':'#0a0600'}}>
                       <td style={{...td,width:'44px',padding:'4px 8px'}}><Img url={img} alt={item.raro} size={34}/></td>
-                      <td style={{...td,color:G,fontWeight:'bold'}}>{item.raro}</td>
+                      <td style={{...td,color:G,fontWeight:'bold'}}><div style={{display:'flex',alignItems:'center',gap:'6px'}}><span>{item.raro}</span>{item.status==='andamento'&&<span style={{background:'#7bb8ff22',color:'#7bb8ff',padding:'1px 6px',fontSize:'11px',whiteSpace:'nowrap'}}>🔄</span>}{item.status==='completo'&&<span style={{background:'#69db7c22',color:'#69db7c',padding:'1px 6px',fontSize:'11px',whiteSpace:'nowrap'}}>✓</span>}</div></td>
                       <td style={{...td,color:'#7bb8ff'}}>{item.comprados}</td>
                       <td style={{...td,color:'#7dffaa'}}>{item.vendidos}</td>
                       <td style={{...td,color:item.estoque>0?G:'#4a3010'}}>{item.estoque}</td>
@@ -1708,24 +1764,29 @@ export default function App(){
           <div><label style={lbl}>QUANTIDADE *</label><input className="inp" style={inp} type="number" min="1" value={oF.quantidade} onChange={e=>setOF({...oF,quantidade:e.target.value})}/></div>
           <div>
             <label style={lbl}>
-              <span style={{cursor:'pointer',color:oF.priceMode==='total'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'total'})}>TOTAL</span>
+              <span style={{cursor:'pointer',color:oF.priceMode==='total'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'total'})}>💰 TOTAL</span>
               <span style={{color:'#7a6035',margin:'0 6px'}}>|</span>
-              <span style={{cursor:'pointer',color:oF.priceMode==='unit'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'unit'})}>POR UNIDADE</span>
+              <span style={{cursor:'pointer',color:oF.priceMode==='unit'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'unit'})}>📦 POR UN.</span>
+              <span style={{color:'#7a6035',margin:'0 6px'}}>|</span>
+              <span style={{cursor:'pointer',color:oF.priceMode==='barra'?G:'#664400',textDecoration:'underline'}} onClick={()=>setOF({...oF,priceMode:'barra'})}>🍫 BARRAS</span>
             </label>
-            {oF.priceMode==='total'
-              ?<input className="inp" style={inp} type="number" min="0" placeholder="preço total (c)" value={oF.precoTotal} onChange={e=>setOF({...oF,precoTotal:e.target.value})}/>
-              :<input className="inp" style={inp} type="number" min="0" placeholder="preço/un (c)" value={oF.precoPorUnidade} onChange={e=>setOF({...oF,precoPorUnidade:e.target.value})}/>
-            }
+            {oF.priceMode==='total'&&<input className="inp" style={inp} type="number" min="0" placeholder="preço total (c)" value={oF.precoTotal} onChange={e=>setOF({...oF,precoTotal:e.target.value})}/>}
+            {oF.priceMode==='unit'&&<input className="inp" style={inp} type="number" min="0" placeholder="preço/un (c)" value={oF.precoPorUnidade} onChange={e=>setOF({...oF,precoPorUnidade:e.target.value})}/>}
+            {oF.priceMode==='barra'&&<input className="inp" style={inp} type="number" min="0" step="0.5" placeholder="total em barras" value={oF.precoBarras} onChange={e=>setOF({...oF,precoBarras:e.target.value})}/>}
           </div>
         </div>
         {/* Preview */}
-        {(oF.precoTotal!==''||oF.precoPorUnidade!=='')&&parseInt(oF.quantidade)>=1&&(()=>{
+        {(oF.precoTotal!==''||oF.precoPorUnidade!==''||oF.precoBarras!=='')&&parseInt(oF.quantidade)>=1&&(()=>{
           const qtd=Math.max(1,parseInt(oF.quantidade)||1);
-          const pt=oF.priceMode==='total'?parseFloat(oF.precoTotal||0):parseFloat(oF.precoPorUnidade||0)*qtd;
-          const ppu=oF.priceMode==='unit'?parseFloat(oF.precoPorUnidade||0):Math.round(pt/qtd);
-          return<div style={{background:'#080500',border:`1px solid #1a1000`,padding:'8px 12px',marginBottom:'13px',fontSize:'16px',color:'#c9a85f',display:'flex',justifyContent:'space-between'}}>
-            <span>Total: <span style={{color:'#cdac72'}}>{pt===0?'0 (presente!)':Math.round(pt)}c</span></span>
-            <span>Por un: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{ppu}c</span></span>
+          let pt;
+          if(oF.priceMode==='total')pt=parseFloat(oF.precoTotal||0);
+          else if(oF.priceMode==='unit')pt=parseFloat(oF.precoPorUnidade||0)*qtd;
+          else pt=parseFloat(oF.precoBarras||0)*BARRA;
+          const ppu=Math.round(pt/qtd),barras=pt/BARRA;
+          return<div style={{background:'#080500',border:`1px solid #1a1000`,padding:'8px 12px',marginBottom:'13px',fontSize:'15px',color:'#c9a85f',display:'flex',justifyContent:'space-between',gap:'10px',flexWrap:'wrap'}}>
+            <span>Total: <span style={{color:'#cdac72'}}>{pt===0?'0 (presente!)':Math.round(pt)+'c'}</span></span>
+            <span>P/ un: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'11px'}}>{ppu}c</span></span>
+            <span>Barras: <span style={{color:'#ffd700'}}>🍫 {barras%1===0?barras:barras.toFixed(1)}</span></span>
           </div>;
         })()}
         {/* Catalog price button */}
