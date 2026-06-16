@@ -126,6 +126,7 @@ export default function App(){
   const [editingTrade,setEditingTrade]=useState(null);
   const [editingP,setEditingP]=useState(null);
   const [editingOrder,setEditingOrder]=useState(null);
+  const [sharingOrder,setSharingOrder]=useState(null);
   // Misc
   const [msg,setMsg]=useState({text:'',type:'info'});
   const [loading,setLoading]=useState(false);
@@ -534,6 +535,49 @@ export default function App(){
 
   async function deleteOrder(id){if(!window.confirm('Excluir esta ordem?'))return;await supabase.from('orders').delete().eq('id',id);await loadAll();flash('Ordem excluída.','info');}
   function openEditOrder(order){setEditingOrder(order);setOrderForm({tipo:order.tipo,items:order.items.map(it=>({...it})),observacao:order.observacao||''});setShowOrderModal(true);}
+
+  // Carrega html2canvas via CDN só quando for usar (evita aumentar o bundle)
+  async function ensureHtml2Canvas(){
+    if(window.html2canvas)return window.html2canvas;
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+      s.onload=res;s.onerror=()=>rej(new Error('Falha ao carregar gerador de imagem'));
+      document.head.appendChild(s);
+    });
+    return window.html2canvas;
+  }
+
+  async function copyOrderAsImage(order){
+    try{
+      flash('Gerando imagem... ⏳','info');
+      setSharingOrder(order);
+      await new Promise(r=>setTimeout(r,120)); // espera o DOM renderizar
+      const h2c=await ensureHtml2Canvas();
+      const node=document.getElementById('share-target');
+      if(!node){setSharingOrder(null);return;}
+      const canvas=await h2c(node,{backgroundColor:'#0a0804',scale:2,logging:false,useCORS:true});
+      setSharingOrder(null);
+      canvas.toBlob(async blob=>{
+        if(!blob){flash('Falha ao gerar imagem.','error');return;}
+        try{
+          await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+          flash('Imagem copiada! Cole no Discord (Ctrl+V) 📋','success');
+        }catch(err){
+          // fallback: baixa o arquivo
+          const url=URL.createObjectURL(blob);
+          const a=document.createElement('a');
+          a.href=url;a.download=`turva-${order.tipo}-${order.username}.png`;
+          document.body.appendChild(a);a.click();a.remove();
+          URL.revokeObjectURL(url);
+          flash('Imagem baixada! Arraste para o Discord 📥','success');
+        }
+      },'image/png');
+    }catch(e){
+      setSharingOrder(null);
+      flash(`Erro ao gerar imagem: ${e.message||'desconhecido'}`,'error');
+    }
+  }
   const addOItem=()=>setOrderForm({...orderForm,items:[...orderForm.items,{raro:'',quantidade:1,preco:''}]});
   const rmOItem=i=>setOrderForm({...orderForm,items:orderForm.items.filter((_,j)=>j!==i)});
   const updOItem=(i,f,v)=>{const its=[...orderForm.items];its[i]={...its[i],[f]:v};setOrderForm({...orderForm,items:its});};
@@ -1303,10 +1347,13 @@ export default function App(){
                     </div>
                     <div style={{textAlign:'right'}}>
                       <div style={{fontFamily:"'Press Start 2P'",fontSize:'8px',color:new Date(order.expires_at)<new Date()?'#f44':'#69db7c'}}>{timeLeft(order.expires_at)}</div>
-                      {canEdit&&<div style={{display:'flex',gap:'4px',marginTop:'6px',justifyContent:'flex-end'}}>
-                        <button style={{...btnD,padding:'3px 8px',fontSize:'16px'}} onClick={()=>openEditOrder(order)}>✎</button>
-                        <button style={{...btnRed,padding:'3px 8px',fontSize:'16px'}} onMouseEnter={e=>{e.currentTarget.style.background='#f44';e.currentTarget.style.color='#fff';}} onMouseLeave={e=>{e.currentTarget.style.background='#220000';e.currentTarget.style.color='#f44';}} onClick={()=>deleteOrder(order.id)}>✕</button>
-                      </div>}
+                      <div style={{display:'flex',gap:'4px',marginTop:'6px',justifyContent:'flex-end'}}>
+                        <button style={{...btnD,padding:'3px 8px',fontSize:'14px'}} title="Copiar como imagem (para Discord)" onClick={()=>copyOrderAsImage(order)}>📸</button>
+                        {canEdit&&<>
+                          <button style={{...btnD,padding:'3px 8px',fontSize:'16px'}} onClick={()=>openEditOrder(order)}>✎</button>
+                          <button style={{...btnRed,padding:'3px 8px',fontSize:'16px'}} onMouseEnter={e=>{e.currentTarget.style.background='#f44';e.currentTarget.style.color='#fff';}} onMouseLeave={e=>{e.currentTarget.style.background='#220000';e.currentTarget.style.color='#f44';}} onClick={()=>deleteOrder(order.id)}>✕</button>
+                        </>}
+                      </div>
                     </div>
                   </div>
                   <div style={{borderTop:`1px solid #1a1000`,paddingTop:'10px'}}>
@@ -1563,6 +1610,52 @@ export default function App(){
           </div>
         </div>
       )}
+
+      {/* ══ SHARE TARGET (oculto, usado para gerar imagem) ══ */}
+      {sharingOrder&&(()=>{
+        const isBuy=sharingOrder.tipo==='compra';
+        const total=sharingOrder.items.reduce((s,it)=>s+(parseFloat(it.preco)||0)*(parseInt(it.quantidade)||1),0);
+        return(
+          <div id="share-target" style={{position:'fixed',left:'-9999px',top:'0',width:'460px',background:BG,padding:'24px',fontFamily:"'VT323',monospace",color:'#c8a870'}}>
+            {/* Header */}
+            <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'14px',paddingBottom:'12px',borderBottom:`2px solid ${G}`}}>
+              <span style={{fontSize:'24px'}}>🏆</span>
+              <span style={{fontFamily:"'Press Start 2P',monospace",fontSize:'14px',color:G,textShadow:'1px 1px 0 #664400',letterSpacing:'1px'}}>TURVA TRADER</span>
+              <span style={{flex:1}}/>
+              <span style={{fontSize:'14px',color:'#7a6035'}}>📋 mercado de raros</span>
+            </div>
+            {/* Order info */}
+            <div style={{marginBottom:'14px'}}>
+              <div style={{display:'inline-block',background:isBuy?'#69db7c22':'#f6622',border:`1px solid ${isBuy?'#69db7c':'#f66'}`,color:isBuy?'#69db7c':'#f66',padding:'5px 14px',fontFamily:"'Press Start 2P',monospace",fontSize:'12px'}}>{isBuy?'🛒 COMPRO':'💰 VENDO'}</div>
+              <div style={{color:G,fontSize:'22px',marginTop:'10px'}}>por <span style={{color:'#fff',fontWeight:'bold'}}>{sharingOrder.username}</span></div>
+            </div>
+            {/* Items */}
+            <div style={{background:BG2,border:'1px solid #2a1800',borderLeft:`3px solid ${isBuy?'#69db7c':'#f66'}`}}>
+              <div style={{padding:'8px 14px',background:'#0d0800',borderBottom:'1px solid #1a1000',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontFamily:"'Press Start 2P',monospace",fontSize:'9px',color:G,letterSpacing:'1px'}}>◆ {sharingOrder.items.length} RAROS</span>
+                <span style={{color:'#9a7d45',fontSize:'14px'}}>Total: <span style={{color:G,fontFamily:"'Press Start 2P'",fontSize:'12px'}}>{Math.round(total)}c</span></span>
+              </div>
+              <div style={{padding:'4px 14px'}}>
+                {sharingOrder.items.map((it,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',padding:'9px 0',borderBottom:i<sharingOrder.items.length-1?'1px solid #1a1000':'none',gap:'10px'}}>
+                    <span style={{color:'#7a6035',fontSize:'15px',width:'24px'}}>{i+1}.</span>
+                    <div style={{flex:1}}>
+                      <div style={{color:'#c8a870',fontSize:'19px',lineHeight:1.1}}>{it.raro}</div>
+                      <div style={{color:'#9a7d45',fontSize:'15px',marginTop:'2px'}}>Quantidade: <span style={{color:'#cdac72'}}>{it.quantidade}</span></div>
+                    </div>
+                    <div style={{fontFamily:"'Press Start 2P'",fontSize:'13px',color:G,background:'#1a1000',padding:'5px 9px',border:`1px solid ${G}33`,whiteSpace:'nowrap'}}>{it.preco}c</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {sharingOrder.observacao&&(
+              <div style={{marginTop:'12px',padding:'10px 14px',background:'#0d0800',borderLeft:`3px solid ${G}`,color:'#b89545',fontSize:'17px',fontStyle:'italic'}}>"{sharingOrder.observacao}"</div>
+            )}
+            {/* Footer */}
+            <div style={{marginTop:'14px',paddingTop:'12px',borderTop:'1px solid #1a1000',textAlign:'center',color:'#7a6035',fontSize:'14px'}}>turva-trader.vercel.app · publique a sua em <span style={{color:G}}>Negociações</span></div>
+          </div>
+        );
+      })()}
 
       {/* ══ CHAT WIDGET ══ */}
       <div className="chat-widget" style={{position:'fixed',bottom:'32px',right:'20px',zIndex:90,width:isMobile?'calc(100vw - 16px)':'300px'}}>
